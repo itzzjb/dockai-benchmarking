@@ -23,9 +23,13 @@ jobs:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Commit and push Dockerfile
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add Dockerfile .dockerignore 2>/dev/null || true
+          echo "Listing files to check for Dockerfile..."
+          ls -la
+          git status
+          git add Dockerfile .dockerignore 2>/dev/null || git add Dockerfile
           git diff --staged --quiet || git commit -m "chore: auto-generate Dockerfile with DockAI"
           git push
