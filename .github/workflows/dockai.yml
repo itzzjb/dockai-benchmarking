@@ -53,6 +53,7 @@ jobs:
     if: needs.detect-changes.outputs.changed_apps != '[]'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         app: ${{ fromJson(needs.detect-changes.outputs.changed_apps) }}
     steps:

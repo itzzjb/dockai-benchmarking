@@ -1,0 +1,25 @@
+[instructions_analyzer]
+This is a Java 17 Spring Boot 3.2 application using Maven.
+The application exposes a REST API on port 8081.
+
+[instructions_generator]
+Use Eclipse Temurin base images which are well-maintained and available:
+- For build stage: Use 'eclipse-temurin:17-jdk' or 'maven:3.9-eclipse-temurin-17'
+- For runtime stage: Use 'eclipse-temurin:17-jre' or 'eclipse-temurin:17-jre-alpine'
+
+DO NOT use these deprecated/unavailable images:
+- openjdk:* (deprecated)
+- maven:*-openjdk-* (not available)
+- Any image with 'buster' suffix for Java
+
+Use multi-stage build:
+1. Build stage with Maven to compile and package
+2. Runtime stage with JRE only for smaller image
+
+The application starts with: java -jar target/*.jar
+Expose port 8081.
+
+[instructions_reviewer]
+Verify the base images are from eclipse-temurin or adoptopenjdk.
+Ensure non-root user is used.
+Check that only the JAR file is copied to the runtime stage.
