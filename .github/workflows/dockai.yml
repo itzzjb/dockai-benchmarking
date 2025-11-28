@@ -1,0 +1,31 @@
+name: Auto-Dockerize
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dockai:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate Dockerfile with DockAI
+        uses: itzzjb/dockai@v3
+        with:
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Commit and push Dockerfile
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Dockerfile .dockerignore 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: auto-generate Dockerfile with DockAI"
+          git push
