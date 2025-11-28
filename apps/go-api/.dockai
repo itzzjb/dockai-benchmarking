@@ -1,0 +1,31 @@
+[instructions_analyzer]
+This is a Go REST API application using only the standard library.
+The application exposes a REST API on port 8080.
+No external dependencies or CGO required.
+
+[instructions_generator]
+CRITICAL: Build the Go binary with CGO_ENABLED=0 for static linking.
+This allows the binary to run on minimal images without GLIBC.
+
+Use multi-stage build:
+1. Build stage: Use 'golang:1.21-alpine' or 'golang:1.21'
+2. Runtime stage: Use 'alpine:3.19' (NOT distroless, as it may have issues)
+
+Build command MUST include:
+- CGO_ENABLED=0 (disable CGO for static binary)
+- GOOS=linux
+- go build -ldflags="-s -w" for smaller binary
+
+Example build command:
+CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/server .
+
+DO NOT use distroless images - use alpine:3.19 instead for the runtime stage.
+Alpine is small (~5MB) and includes basic utilities for debugging.
+
+Expose port 8080.
+Run as non-root user.
+
+[instructions_reviewer]
+Verify CGO_ENABLED=0 is set in the build command.
+Ensure alpine (not distroless) is used for runtime.
+Check that the binary is statically linked.
