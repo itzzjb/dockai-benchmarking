@@ -3,16 +3,58 @@ name: Auto-Dockerize
 on:
   push:
     branches: [main]
+    paths:
+      - "apps/**"
   pull_request:
     branches: [main]
+    paths:
+      - "apps/**"
   workflow_dispatch:
+    inputs:
+      app_path:
+        description: "App directory to generate Dockerfile for (e.g., apps/nodejs-api)"
+        required: true
+        default: "apps/nodejs-api"
 
 permissions:
   contents: write
 
 jobs:
-  dockai:
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      changed_apps: ${{ steps.detect.outputs.changed_apps }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed app directories
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Use the manually specified path
+            echo "changed_apps=[\"${{ github.event.inputs.app_path }}\"]" >> $GITHUB_OUTPUT
+          else
+            # Detect changed directories under apps/
+            CHANGED_APPS=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^apps/' | cut -d'/' -f1-2 | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            if [ "$CHANGED_APPS" == "[]" ] || [ -z "$CHANGED_APPS" ]; then
+              echo "No app changes detected"
+              echo "changed_apps=[]" >> $GITHUB_OUTPUT
+            else
+              echo "Changed apps: $CHANGED_APPS"
+              echo "changed_apps=$CHANGED_APPS" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  dockai:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.changed_apps != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.detect-changes.outputs.changed_apps) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,15 +63,16 @@ jobs:
         uses: itzzjb/dockai@v3.0.0
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          project_path: ${{ matrix.app }}
 
       - name: Commit and push Dockerfile
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          echo "Listing files to check for Dockerfile..."
-          ls -la
+          echo "Checking for Dockerfile in ${{ matrix.app }}..."
+          ls -la ${{ matrix.app }}
           git status
-          git add Dockerfile .dockerignore 2>/dev/null || git add Dockerfile
-          git diff --staged --quiet || git commit -m "chore: auto-generate Dockerfile with DockAI"
+          git add ${{ matrix.app }}/Dockerfile ${{ matrix.app }}/.dockerignore 2>/dev/null || git add ${{ matrix.app }}/Dockerfile
+          git diff --staged --quiet || git commit -m "chore: auto-generate Dockerfile for ${{ matrix.app }} with DockAI"
           git push
