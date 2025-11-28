@@ -1,3 +1,4 @@
+// DocAI Test App - Java Spring Boot API
 package com.example.api;
 
 import org.springframework.boot.SpringApplication;

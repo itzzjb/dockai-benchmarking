@@ -1,3 +1,4 @@
+// DocAI Test App - Go REST API
 package main
 
 import (

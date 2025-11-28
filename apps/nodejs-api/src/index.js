@@ -1,3 +1,4 @@
+// DocAI Test App - Node.js Express API
 const express = require('express');
 const cors = require('cors');
 const config = require('./config');
