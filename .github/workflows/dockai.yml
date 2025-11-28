@@ -74,19 +74,19 @@ jobs:
           echo "Checking for Dockerfile in ${{ matrix.app }}..."
           ls -la ${{ matrix.app }}
           git status
-          
+
           # Add files
           git add ${{ matrix.app }}/Dockerfile ${{ matrix.app }}/.dockerignore 2>/dev/null || git add ${{ matrix.app }}/Dockerfile
-          
+
           # Only proceed if there are changes
           if git diff --staged --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          
+
           # Commit the changes
           git commit -m "chore: auto-generate Dockerfile for ${{ matrix.app }} with DockAI"
-          
+
           # Retry push with pull-rebase to handle concurrent pushes
           MAX_RETRIES=5
           RETRY_COUNT=0
