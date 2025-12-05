@@ -1,9 +1,66 @@
 {
-  "repositories": [
+  "repo": "https://github.com/GoogleCloudPlatform/microservices-demo",
+  "base_path": "src",
+  "microservices": [
     {
-      "name": "test",
-      "url": "https://github.com/bhashana99/SecurePost",
-      "description": "Test"
+      "name": "adservice",
+      "path": "src/adservice",
+      "language": "Java"
+    },
+    {
+      "name": "cartservice",
+      "path": "src/cartservice",
+      "language": "C#"
+    },
+    {
+      "name": "checkoutservice",
+      "path": "src/checkoutservice",
+      "language": "Go"
+    },
+    {
+      "name": "currencyservice",
+      "path": "src/currencyservice",
+      "language": "Node.js"
+    },
+    {
+      "name": "emailservice",
+      "path": "src/emailservice",
+      "language": "Python"
+    },
+    {
+      "name": "frontend",
+      "path": "src/frontend",
+      "language": "Go"
+    },
+    {
+      "name": "loadgenerator",
+      "path": "src/loadgenerator",
+      "language": "Python"
+    },
+    {
+      "name": "paymentservice",
+      "path": "src/paymentservice",
+      "language": "Node.js"
+    },
+    {
+      "name": "productcatalogservice",
+      "path": "src/productcatalogservice",
+      "language": "Go"
+    },
+    {
+      "name": "recommendationservice",
+      "path": "src/recommendationservice",
+      "language": "Python"
+    },
+    {
+      "name": "shippingservice",
+      "path": "src/shippingservice",
+      "language": "Go"
+    },
+    {
+      "name": "shoppingassistantservice",
+      "path": "src/shoppingassistantservice",
+      "language": "Python"
     }
   ]
 }

@@ -1,4 +1,4 @@
-name: DocKAI Test Suite
+name: DocKAI Microservices Test
 
 on:
     push:
@@ -9,141 +9,481 @@ on:
     pull_request:
         branches: [main]
     workflow_dispatch:
-        inputs:
-            repo_url:
-                description: "Custom repository URL to test (optional - leave empty to use repos.json)"
-                required: false
-                default: ""
-            repo_name:
-                description: "Name for the custom repository (required if repo_url is provided)"
-                required: false
-                default: ""
 
 permissions:
     contents: read
 
 jobs:
-    load-repos:
+    test-dockai:
         runs-on: ubuntu-latest
-        outputs:
-            matrix: ${{ steps.set-matrix.outputs.matrix }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
 
-            - name: Set up repository matrix
-              id: set-matrix
+            - name: Clone microservices-demo repository
               run: |
-                  if [ -n "${{ github.event.inputs.repo_url }}" ]; then
-                    # Use custom repo from workflow dispatch
-                    MATRIX=$(jq -n --arg url "${{ github.event.inputs.repo_url }}" --arg name "${{ github.event.inputs.repo_name }}" \
-                      '{repositories: [{name: $name, url: $url, description: "Custom test repo"}]}')
-                  else
-                    # Load from repos.json
-                    MATRIX=$(cat repos.json)
+                  echo "🔄 Cloning GoogleCloudPlatform/microservices-demo..."
+                  git clone --depth 1 https://github.com/GoogleCloudPlatform/microservices-demo target-repo
+                  echo "✅ Successfully cloned repository"
+
+            - name: Display repository structure
+              run: |
+                  echo "📂 Microservices in src/:"
+                  ls -la target-repo/src/
+
+            - name: Test adservice (Java)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: adservice (Java)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/adservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
                   fi
-                  echo "matrix=$(echo $MATRIX | jq -c .)" >> $GITHUB_OUTPUT
 
-    test-dockai:
-        needs: load-repos
-        runs-on: ubuntu-latest
-        strategy:
-            fail-fast: false
-            matrix:
-                repo: ${{ fromJson(needs.load-repos.outputs.matrix).repositories }}
-        steps:
-            - name: Checkout test repository
-              uses: actions/checkout@v4
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
 
-            - name: Clone target repository
-              run: |
-                  echo "🔄 Cloning ${{ matrix.repo.name }} from ${{ matrix.repo.url }}"
-                  git clone --depth 1 ${{ matrix.repo.url }} target-repo
-                  echo "✅ Successfully cloned ${{ matrix.repo.name }}"
-
-            - name: Display repository info
-              run: |
-                  echo "📦 Repository: ${{ matrix.repo.name }}"
-                  echo "📝 Description: ${{ matrix.repo.description }}"
-                  echo "🔗 URL: ${{ matrix.repo.url }}"
-                  echo ""
-                  echo "📂 Repository structure:"
-                  ls -la target-repo/
-                  echo ""
-                  echo "📄 Files in root:"
-                  find target-repo -maxdepth 2 -type f | head -20
-
-            - name: Generate Dockerfile with DocKAI
-              id: dockai
+            - name: Generate Dockerfile for adservice
               uses: itzzjb/dockai@v3.0.0
               with:
                   openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-                  project_path: target-repo
+                  project_path: target-repo/src/adservice
 
-            - name: Verify Dockerfile generation
-              id: verify
+            - name: Verify adservice Dockerfile
               run: |
-                  echo "🔍 Checking for generated Dockerfile..."
-                  if [ -f "target-repo/Dockerfile" ]; then
-                    echo "✅ Dockerfile generated successfully!"
-                    echo "dockerfile_exists=true" >> $GITHUB_OUTPUT
-                    echo ""
-                    echo "📄 Generated Dockerfile content:"
-                    echo "================================"
-                    cat target-repo/Dockerfile
-                    echo ""
-                    echo "================================"
+                  if [ -f "target-repo/src/adservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for adservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/adservice/Dockerfile
                   else
-                    echo "❌ Dockerfile was not generated"
-                    echo "dockerfile_exists=false" >> $GITHUB_OUTPUT
+                    echo "❌ Failed to generate Dockerfile for adservice"
                     exit 1
                   fi
 
-            - name: Check for .dockerignore
+            - name: Test cartservice (C#)
               run: |
-                  if [ -f "target-repo/.dockerignore" ]; then
-                    echo "✅ .dockerignore also generated!"
-                    echo ""
-                    echo "📄 Generated .dockerignore content:"
-                    echo "================================"
-                    cat target-repo/.dockerignore
-                    echo "================================"
-                  else
-                    echo "ℹ️ No .dockerignore generated (optional)"
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: cartservice (C#)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/cartservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
                   fi
 
-            - name: Validate Dockerfile syntax
-              run: |
-                  echo "🔍 Validating Dockerfile syntax..."
-                  docker run --rm -i hadolint/hadolint < target-repo/Dockerfile || true
-                  echo "✅ Dockerfile syntax validation complete"
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
 
-            - name: Test Docker build (dry-run)
-              run: |
-                  echo "🐳 Testing Docker build for ${{ matrix.repo.name }}..."
-                  cd target-repo
-                  # Try to build the image (may fail due to missing dependencies, but validates Dockerfile structure)
-                  timeout 300 docker build --no-cache -t dockai-test-${{ matrix.repo.name }}:test . || {
-                    echo "⚠️ Docker build did not complete (this may be expected for complex projects)"
-                    echo "The Dockerfile was generated but the build requires additional setup"
-                  }
+            - name: Generate Dockerfile for cartservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/cartservice
 
-    summary:
-        needs: test-dockai
-        runs-on: ubuntu-latest
-        if: always()
-        steps:
+            - name: Verify cartservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/cartservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for cartservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/cartservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for cartservice"
+                    exit 1
+                  fi
+
+            - name: Test checkoutservice (Go)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: checkoutservice (Go)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/checkoutservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for checkoutservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/checkoutservice
+
+            - name: Verify checkoutservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/checkoutservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for checkoutservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/checkoutservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for checkoutservice"
+                    exit 1
+                  fi
+
+            - name: Test currencyservice (Node.js)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: currencyservice (Node.js)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/currencyservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for currencyservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/currencyservice
+
+            - name: Verify currencyservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/currencyservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for currencyservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/currencyservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for currencyservice"
+                    exit 1
+                  fi
+
+            - name: Test emailservice (Python)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: emailservice (Python)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/emailservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for emailservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/emailservice
+
+            - name: Verify emailservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/emailservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for emailservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/emailservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for emailservice"
+                    exit 1
+                  fi
+
+            - name: Test frontend (Go)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: frontend (Go)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/frontend"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for frontend
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/frontend
+
+            - name: Verify frontend Dockerfile
+              run: |
+                  if [ -f "target-repo/src/frontend/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for frontend!"
+                    echo "📄 Content:"
+                    cat target-repo/src/frontend/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for frontend"
+                    exit 1
+                  fi
+
+            - name: Test loadgenerator (Python)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: loadgenerator (Python)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/loadgenerator"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for loadgenerator
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/loadgenerator
+
+            - name: Verify loadgenerator Dockerfile
+              run: |
+                  if [ -f "target-repo/src/loadgenerator/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for loadgenerator!"
+                    echo "📄 Content:"
+                    cat target-repo/src/loadgenerator/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for loadgenerator"
+                    exit 1
+                  fi
+
+            - name: Test paymentservice (Node.js)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: paymentservice (Node.js)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/paymentservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for paymentservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/paymentservice
+
+            - name: Verify paymentservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/paymentservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for paymentservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/paymentservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for paymentservice"
+                    exit 1
+                  fi
+
+            - name: Test productcatalogservice (Go)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: productcatalogservice (Go)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/productcatalogservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for productcatalogservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/productcatalogservice
+
+            - name: Verify productcatalogservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/productcatalogservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for productcatalogservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/productcatalogservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for productcatalogservice"
+                    exit 1
+                  fi
+
+            - name: Test recommendationservice (Python)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: recommendationservice (Python)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/recommendationservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for recommendationservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/recommendationservice
+
+            - name: Verify recommendationservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/recommendationservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for recommendationservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/recommendationservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for recommendationservice"
+                    exit 1
+                  fi
+
+            - name: Test shippingservice (Go)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: shippingservice (Go)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/shippingservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for shippingservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/shippingservice
+
+            - name: Verify shippingservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/shippingservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for shippingservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/shippingservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for shippingservice"
+                    exit 1
+                  fi
+
+            - name: Test shoppingassistantservice (Python)
+              run: |
+                  echo ""
+                  echo "=============================================="
+                  echo "🧪 Testing: shoppingassistantservice (Python)"
+                  echo "=============================================="
+
+                  SERVICE_PATH="target-repo/src/shoppingassistantservice"
+
+                  # Remove existing Dockerfile
+                  if [ -f "$SERVICE_PATH/Dockerfile" ]; then
+                    echo "🗑️ Removing existing Dockerfile..."
+                    rm -f "$SERVICE_PATH/Dockerfile"
+                    rm -f "$SERVICE_PATH/.dockerignore"
+                  fi
+
+                  echo "📂 Service contents:"
+                  ls -la $SERVICE_PATH/
+
+            - name: Generate Dockerfile for shoppingassistantservice
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo/src/shoppingassistantservice
+
+            - name: Verify shoppingassistantservice Dockerfile
+              run: |
+                  if [ -f "target-repo/src/shoppingassistantservice/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated for shoppingassistantservice!"
+                    echo "📄 Content:"
+                    cat target-repo/src/shoppingassistantservice/Dockerfile
+                  else
+                    echo "❌ Failed to generate Dockerfile for shoppingassistantservice"
+                    exit 1
+                  fi
+
             - name: Test Summary
               run: |
+                  echo ""
+                  echo "=============================================="
                   echo "📊 DocKAI Test Suite Summary"
-                  echo "============================"
+                  echo "=============================================="
+                  echo ""
+                  echo "✅ All 12 microservices tested successfully!"
+                  echo ""
+                  echo "Services tested:"
+                  echo "  1. adservice (Java)"
+                  echo "  2. cartservice (C#)"
+                  echo "  3. checkoutservice (Go)"
+                  echo "  4. currencyservice (Node.js)"
+                  echo "  5. emailservice (Python)"
+                  echo "  6. frontend (Go)"
+                  echo "  7. loadgenerator (Python)"
+                  echo "  8. paymentservice (Node.js)"
+                  echo "  9. productcatalogservice (Go)"
+                  echo "  10. recommendationservice (Python)"
+                  echo "  11. shippingservice (Go)"
+                  echo "  12. shoppingassistantservice (Python)"
                   echo ""
                   echo "Test completed at: $(date)"
-                  echo ""
-                  if [ "${{ needs.test-dockai.result }}" == "success" ]; then
-                    echo "✅ All DocKAI tests passed!"
-                  elif [ "${{ needs.test-dockai.result }}" == "failure" ]; then
-                    echo "❌ Some DocKAI tests failed"
-                  else
-                    echo "⚠️ Tests completed with status: ${{ needs.test-dockai.result }}"
-                  fi
