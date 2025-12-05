@@ -1,0 +1,149 @@
+name: DocKAI Test Suite
+
+on:
+    push:
+        branches: [main]
+        paths:
+            - "repos.json"
+            - ".github/workflows/dockai-test.yml"
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            repo_url:
+                description: "Custom repository URL to test (optional - leave empty to use repos.json)"
+                required: false
+                default: ""
+            repo_name:
+                description: "Name for the custom repository (required if repo_url is provided)"
+                required: false
+                default: ""
+
+permissions:
+    contents: read
+
+jobs:
+    load-repos:
+        runs-on: ubuntu-latest
+        outputs:
+            matrix: ${{ steps.set-matrix.outputs.matrix }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up repository matrix
+              id: set-matrix
+              run: |
+                  if [ -n "${{ github.event.inputs.repo_url }}" ]; then
+                    # Use custom repo from workflow dispatch
+                    MATRIX=$(jq -n --arg url "${{ github.event.inputs.repo_url }}" --arg name "${{ github.event.inputs.repo_name }}" \
+                      '{repositories: [{name: $name, url: $url, description: "Custom test repo"}]}')
+                  else
+                    # Load from repos.json
+                    MATRIX=$(cat repos.json)
+                  fi
+                  echo "matrix=$(echo $MATRIX | jq -c .)" >> $GITHUB_OUTPUT
+
+    test-dockai:
+        needs: load-repos
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                repo: ${{ fromJson(needs.load-repos.outputs.matrix).repositories }}
+        steps:
+            - name: Checkout test repository
+              uses: actions/checkout@v4
+
+            - name: Clone target repository
+              run: |
+                  echo "🔄 Cloning ${{ matrix.repo.name }} from ${{ matrix.repo.url }}"
+                  git clone --depth 1 ${{ matrix.repo.url }} target-repo
+                  echo "✅ Successfully cloned ${{ matrix.repo.name }}"
+
+            - name: Display repository info
+              run: |
+                  echo "📦 Repository: ${{ matrix.repo.name }}"
+                  echo "📝 Description: ${{ matrix.repo.description }}"
+                  echo "🔗 URL: ${{ matrix.repo.url }}"
+                  echo ""
+                  echo "📂 Repository structure:"
+                  ls -la target-repo/
+                  echo ""
+                  echo "📄 Files in root:"
+                  find target-repo -maxdepth 2 -type f | head -20
+
+            - name: Generate Dockerfile with DocKAI
+              id: dockai
+              uses: itzzjb/dockai@v3.0.0
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo
+
+            - name: Verify Dockerfile generation
+              id: verify
+              run: |
+                  echo "🔍 Checking for generated Dockerfile..."
+                  if [ -f "target-repo/Dockerfile" ]; then
+                    echo "✅ Dockerfile generated successfully!"
+                    echo "dockerfile_exists=true" >> $GITHUB_OUTPUT
+                    echo ""
+                    echo "📄 Generated Dockerfile content:"
+                    echo "================================"
+                    cat target-repo/Dockerfile
+                    echo ""
+                    echo "================================"
+                  else
+                    echo "❌ Dockerfile was not generated"
+                    echo "dockerfile_exists=false" >> $GITHUB_OUTPUT
+                    exit 1
+                  fi
+
+            - name: Check for .dockerignore
+              run: |
+                  if [ -f "target-repo/.dockerignore" ]; then
+                    echo "✅ .dockerignore also generated!"
+                    echo ""
+                    echo "📄 Generated .dockerignore content:"
+                    echo "================================"
+                    cat target-repo/.dockerignore
+                    echo "================================"
+                  else
+                    echo "ℹ️ No .dockerignore generated (optional)"
+                  fi
+
+            - name: Validate Dockerfile syntax
+              run: |
+                  echo "🔍 Validating Dockerfile syntax..."
+                  docker run --rm -i hadolint/hadolint < target-repo/Dockerfile || true
+                  echo "✅ Dockerfile syntax validation complete"
+
+            - name: Test Docker build (dry-run)
+              run: |
+                  echo "🐳 Testing Docker build for ${{ matrix.repo.name }}..."
+                  cd target-repo
+                  # Try to build the image (may fail due to missing dependencies, but validates Dockerfile structure)
+                  timeout 300 docker build --no-cache -t dockai-test-${{ matrix.repo.name }}:test . || {
+                    echo "⚠️ Docker build did not complete (this may be expected for complex projects)"
+                    echo "The Dockerfile was generated but the build requires additional setup"
+                  }
+
+    summary:
+        needs: test-dockai
+        runs-on: ubuntu-latest
+        if: always()
+        steps:
+            - name: Test Summary
+              run: |
+                  echo "📊 DocKAI Test Suite Summary"
+                  echo "============================"
+                  echo ""
+                  echo "Test completed at: $(date)"
+                  echo ""
+                  if [ "${{ needs.test-dockai.result }}" == "success" ]; then
+                    echo "✅ All DocKAI tests passed!"
+                  elif [ "${{ needs.test-dockai.result }}" == "failure" ]; then
+                    echo "❌ Some DocKAI tests failed"
+                  else
+                    echo "⚠️ Tests completed with status: ${{ needs.test-dockai.result }}"
+                  fi

@@ -1,0 +1,29 @@
+{
+  "repositories": [
+    {
+      "name": "express",
+      "url": "https://github.com/expressjs/express",
+      "description": "Fast, unopinionated, minimalist web framework for Node.js"
+    },
+    {
+      "name": "flask",
+      "url": "https://github.com/pallets/flask",
+      "description": "The Python micro framework for building web applications"
+    },
+    {
+      "name": "gin",
+      "url": "https://github.com/gin-gonic/gin",
+      "description": "Gin is a HTTP web framework written in Go"
+    },
+    {
+      "name": "fastapi",
+      "url": "https://github.com/tiangolo/fastapi",
+      "description": "FastAPI framework, high performance, easy to learn"
+    },
+    {
+      "name": "spring-petclinic",
+      "url": "https://github.com/spring-projects/spring-petclinic",
+      "description": "A sample Spring-based application"
+    }
+  ]
+}
