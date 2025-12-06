@@ -143,6 +143,13 @@ jobs:
 
                   git -C "${TARGET_DIR}" remote set-url origin "$base_url"
 
+            - name: Backup human Dockerfile (if present)
+              run: |
+                  set -euo pipefail
+                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+                    cp "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.human.bak"
+                  fi
+
             - name: Generate DockAI Dockerfile
               uses: itzzjb/dockai@v3
               with:
@@ -150,22 +157,17 @@ jobs:
                   project_path: ${{ env.TARGET_DIR }}
                   max_retries: 7
 
-            - name: Preserve human Dockerfile and keep DockAI output separate
+            - name: Separate DockAI output and restore human Dockerfile
               run: |
                   set -euo pipefail
-                  human_backup="${TARGET_DIR}/Dockerfile.human.bak"
-                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-                    cp "${TARGET_DIR}/Dockerfile" "$human_backup"
-                  fi
-
-                  # If DockAI produced a Dockerfile, move it to Dockerfile.dockai
+                  # Move DockAI-generated Dockerfile aside
                   if [ -f "${TARGET_DIR}/Dockerfile" ]; then
                     mv "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.dockai"
                   fi
 
-                  # Restore original human Dockerfile if it existed
-                  if [ -f "$human_backup" ]; then
-                    mv "$human_backup" "${TARGET_DIR}/Dockerfile"
+                  # Restore human Dockerfile if we had one
+                  if [ -f "${TARGET_DIR}/Dockerfile.human.bak" ]; then
+                    mv "${TARGET_DIR}/Dockerfile.human.bak" "${TARGET_DIR}/Dockerfile"
                   fi
 
             - name: Set up Docker Buildx
