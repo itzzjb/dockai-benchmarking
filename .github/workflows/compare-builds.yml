@@ -209,6 +209,17 @@ jobs:
           d_size=$(get_size "${DOCKAI_IMG}"); d_time=$(get_time dockai_time.txt); d_omega=$(get_omega trivy-dockai.json)
           c_size=$(get_size "${CNB_IMG}");    c_time=$(get_time cnb_time.txt);   c_omega=$(get_omega trivy-cnb.json)
 
+          # Coerce missing or non-positive values to safe defaults to avoid awk/bc errors
+          default_zero() { local v="$1"; [ -z "$v" ] && echo 0 || echo "$v"; }
+          default_one() {
+            local v="$1"
+            if [ -z "$v" ]; then echo 1; elif [ "$v" -le 0 ] 2>/dev/null; then echo 1; else echo "$v"; fi
+          }
+
+          h_size=$(default_zero "$h_size"); h_time=$(default_zero "$h_time"); h_omega=$(default_zero "$h_omega")
+          d_size=$(default_zero "$d_size"); d_time=$(default_zero "$d_time"); d_omega=$(default_zero "$d_omega")
+          c_size=$(default_one "$c_size");  c_time=$(default_one "$c_time");  c_omega=$(default_one "$c_omega")
+
           # 2. ZERO-DIVISION PROTECTION (For Baseline)
           # If any baseline metric is 0, set it to 1 to allow division
           [ "$c_size" -le 0 ] && c_size=1
@@ -246,13 +257,22 @@ jobs:
 
           c_score="1.0000"
 
+          # Safe float comparison that tolerates bc parse failures
+          safe_lt() {
+            local a="${1:-}"
+            local b="${2:-}"
+            local cmp
+            cmp=$(echo "$a < $b" | bc -l 2>/dev/null || echo 0)
+            [ "$cmp" -gt 0 ]
+          }
+
           # 4. DETERMINE WINNER
           winner="CNB (Baseline)"
           lowest=$c_score
 
           # Use bc for float comparison
-          if (( $(echo "$h_score < $lowest" | bc -l) )); then lowest=$h_score; winner="Human"; fi
-          if (( $(echo "$d_score < $lowest" | bc -l) )); then lowest=$d_score; winner="DockAI"; fi
+          if safe_lt "$h_score" "$lowest"; then lowest=$h_score; winner="Human"; fi
+          if safe_lt "$d_score" "$lowest"; then lowest=$d_score; winner="DockAI"; fi
 
           # Export
           echo "winner=$winner" >> "$GITHUB_ENV"
