@@ -24,7 +24,7 @@ jobs:
             HUMAN_IMG: human:compare
             DOCKAI_IMG: dockai:compare
             CNB_IMG: cnb:compare
-            PACK_VERSION: v0.34.2
+            PACK_VERSION: v0.34.1
 
         steps:
             - name: Checkout workflow repo
