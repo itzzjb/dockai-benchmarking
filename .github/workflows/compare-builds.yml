@@ -2,15 +2,10 @@ name: Compare DockAI vs Human vs CNB (Academic Benchmark)
 
 on:
   workflow_dispatch:
-    inputs:
-      repo_url:
-        description: "Override repository URL"
-        required: false
-        default: ""
-      branch:
-        description: "Branch or ref to build"
-        required: false
-        default: ""
+  push:
+    branches: [main]
+    paths:
+      - config.json
 
 jobs:
   compare:
@@ -104,6 +99,7 @@ jobs:
 
       - name: Generate DockAI Dockerfile
         uses: itzzjb/dockai@v3
+        continue-on-error: true
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           project_path: ${{ env.TARGET_DIR }}
@@ -134,29 +130,49 @@ jobs:
       - name: Build Human (Measure Time)
         if: steps.detect.outputs.human_present == 'true'
         run: |
+          # Continue even if the build fails so later steps can still run
+          set -u -o pipefail
           start=$(date +%s)
-          docker build --file "${TARGET_DIR}/Dockerfile" --tag "${HUMAN_IMG}" "${TARGET_DIR}"
+          if docker build --file "${TARGET_DIR}/Dockerfile" --tag "${HUMAN_IMG}" "${TARGET_DIR}"; then
+            status="success"
+          else
+            status="failed"
+          fi
           end=$(date +%s)
           echo "$((end-start))" > human_time.txt
+          echo "$status" > human_status.txt
 
       - name: Build DockAI (Measure Time)
         if: steps.detect.outputs.dockai_present == 'true'
         run: |
+          set -u -o pipefail
           start=$(date +%s)
-          docker build --file "${TARGET_DIR}/Dockerfile.dockai" --tag "${DOCKAI_IMG}" "${TARGET_DIR}"
+          if docker build --file "${TARGET_DIR}/Dockerfile.dockai" --tag "${DOCKAI_IMG}" "${TARGET_DIR}"; then
+            status="success"
+          else
+            status="failed"
+          fi
           end=$(date +%s)
           echo "$((end-start))" > dockai_time.txt
+          echo "$status" > dockai_status.txt
 
       - name: Build CNB (Measure Time)
         run: |
+          set -u -o pipefail
           start=$(date +%s)
-          pack build "${CNB_IMG}" --builder paketobuildpacks/builder:base --path "${TARGET_DIR}" --pull-policy if-not-present
+          if pack build "${CNB_IMG}" --builder paketobuildpacks/builder:base --path "${TARGET_DIR}" --pull-policy if-not-present; then
+            status="success"
+          else
+            status="failed"
+          fi
           end=$(date +%s)
           echo "$((end-start))" > cnb_time.txt
+          echo "$status" > cnb_status.txt
 
       # --- METRIC COLLECTION ---
 
       - name: Trivy Scans
+        if: always()
         run: |
           # Function to run trivy safely
           run_trivy() {
@@ -173,6 +189,7 @@ jobs:
           run_trivy "${CNB_IMG}" trivy-cnb.json
 
       - name: Calculate Academic Metrics (C_total)
+        if: always()
         id: math
         env:
           W_SIZE: 0.3
@@ -182,6 +199,7 @@ jobs:
           set -e
 
           # 1. ROBUST METRIC EXTRACTION
+          get_status() { [ -f "$1" ] && cat "$1" || echo "missing"; }
           get_size() { docker image inspect "$1" --format '{{.Size}}' 2>/dev/null || echo 0; }
           get_time() { cat "$1" 2>/dev/null || echo 0; }
 
@@ -230,6 +248,7 @@ jobs:
           }
 
           # Get Raw Values
+          h_status=$(get_status human_status.txt); d_status=$(get_status dockai_status.txt); c_status=$(get_status cnb_status.txt)
           h_size=$(get_size "${HUMAN_IMG}"); h_time=$(get_time human_time.txt); h_omega=$(get_omega trivy-human.json)
           d_size=$(get_size "${DOCKAI_IMG}"); d_time=$(get_time dockai_time.txt); d_omega=$(get_omega trivy-dockai.json)
           c_size=$(get_size "${CNB_IMG}");    c_time=$(get_time cnb_time.txt);   c_omega=$(get_omega trivy-cnb.json)
@@ -311,6 +330,12 @@ jobs:
           d_final=$(calc_final "$d_score" "$d_penalty")
           c_final=$(calc_final "$c_score" "$c_penalty")
 
+          # Disqualify builds that did not finish
+          dq_score="9999"
+          if [ "$h_status" != "success" ]; then h_final=$dq_score; h_score=$dq_score; fi
+          if [ "$d_status" != "success" ]; then d_final=$dq_score; d_score=$dq_score; fi
+          if [ "$c_status" != "success" ]; then c_final=$dq_score; c_score=$dq_score; fi
+
           # Safe float comparison that tolerates bc parse failures
           safe_lt() {
             local a="${1:-}"
@@ -321,12 +346,20 @@ jobs:
           }
 
           # 5. DETERMINE WINNER (uses final score including penalty)
-          winner="CNB (Baseline)"
-          lowest=$c_final
+          winner="No successful builds"
+          lowest=""
 
-          # Use bc for float comparison
-          if safe_lt "$h_final" "$lowest"; then lowest=$h_final; winner="Human"; fi
-          if safe_lt "$d_final" "$lowest"; then lowest=$d_final; winner="DockAI"; fi
+          if [ "$c_status" = "success" ]; then
+            winner="CNB (Baseline)"; lowest=$c_final
+          fi
+
+          if [ "$h_status" = "success" ] && { [ -z "$lowest" ] || safe_lt "$h_final" "$lowest"; }; then
+            lowest=$h_final; winner="Human"
+          fi
+
+          if [ "$d_status" = "success" ] && { [ -z "$lowest" ] || safe_lt "$d_final" "$lowest"; }; then
+            lowest=$d_final; winner="DockAI"
+          fi
 
           # Export
           echo "winner=$winner" >> "$GITHUB_ENV"
@@ -339,21 +372,38 @@ jobs:
           # Generate JSON
           cat <<EOF > results.json
           {
-            "baseline": {"size": $c_size, "time": $c_time, "omega": $c_omega, "errors": $c_err, "warnings": $c_warn, "penalty": $c_penalty, "cost": $c_final},
-            "human": {"size": $h_size, "time": $h_time, "omega": $h_omega, "errors": $h_err, "warnings": $h_warn, "penalty": $h_penalty, "cost": $h_final},
-            "dockai": {"size": $d_size, "time": $d_time, "omega": $d_omega, "errors": $d_err, "warnings": $d_warn, "penalty": $d_penalty, "cost": $d_final}
+            "baseline": {"status": "$c_status", "size": $c_size, "time": $c_time, "omega": $c_omega, "errors": $c_err, "warnings": $c_warn, "penalty": $c_penalty, "cost": $c_final},
+            "human": {"status": "$h_status", "size": $h_size, "time": $h_time, "omega": $h_omega, "errors": $h_err, "warnings": $h_warn, "penalty": $h_penalty, "cost": $h_final},
+            "dockai": {"status": "$d_status", "size": $d_size, "time": $d_time, "omega": $d_omega, "errors": $d_err, "warnings": $d_warn, "penalty": $d_penalty, "cost": $d_final},
+            "notes": {"disqualified_score": $dq_score, "winner": "$winner"}
           }
           EOF
 
+      - name: Publish GitHub Summary
+        if: always()
+        run: |
+          winner=${winner:-$(jq -r '.notes.winner // "Unknown"' results.json)}
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Build-off Summary
+          | Method | Status | Cost (C_final) | Notes |
+          | :--- | :--- | :--- | :--- |
+          | CNB (Baseline) | $(jq -r '.baseline.status' results.json) | $(jq -r '.baseline.cost' results.json) | Baseline for normalization |
+          | Human | $(jq -r '.human.status' results.json) | $(jq -r '.human.cost' results.json) | Disqualified score applied on failure |
+          | DockAI | $(jq -r '.dockai.status' results.json) | $(jq -r '.dockai.cost' results.json) | Disqualified score applied on failure |
+
+          **Winner:** ${winner}
+          EOF
+
       - name: Generate Academic Report
+        if: always()
         run: |
           # Convert sizes to MB for display
           to_mb() { awk -v v="$1" 'BEGIN {printf "%.2f", v/1024/1024}'; }
 
           # Read JSON
-          hs=$(jq '.human.size' results.json); ht=$(jq '.human.time' results.json); ho=$(jq '.human.omega' results.json); hc=$(jq '.human.cost' results.json)
-          ds=$(jq '.dockai.size' results.json); dt=$(jq '.dockai.time' results.json); do=$(jq '.dockai.omega' results.json); dc=$(jq '.dockai.cost' results.json)
-          cs=$(jq '.baseline.size' results.json); ct=$(jq '.baseline.time' results.json); co=$(jq '.baseline.omega' results.json); bc=$(jq '.baseline.cost' results.json)
+          hs=$(jq '.human.size' results.json); ht=$(jq '.human.time' results.json); ho=$(jq '.human.omega' results.json); hc=$(jq '.human.cost' results.json); hs_status=$(jq -r '.human.status' results.json)
+          ds=$(jq '.dockai.size' results.json); dt=$(jq '.dockai.time' results.json); do=$(jq '.dockai.omega' results.json); dc=$(jq '.dockai.cost' results.json); ds_status=$(jq -r '.dockai.status' results.json)
+          cs=$(jq '.baseline.size' results.json); ct=$(jq '.baseline.time' results.json); co=$(jq '.baseline.omega' results.json); bc=$(jq '.baseline.cost' results.json); cs_status=$(jq -r '.baseline.status' results.json)
 
           cat > "${REPORT_PATH}" <<EOF
           # Empirical Evaluation Report
@@ -363,9 +413,9 @@ jobs:
           ## 1. Executive Summary (Lower \$C_{final}\$ is Better)
           | Method | Size (MB) | Build Time (s) | Sec. Index (\$\\Omega\$) | **\$C_{final}\$ Score** |
           | :--- | :--- | :--- | :--- | :--- |
-          | **CNB (Baseline)** | $(to_mb $cs) | $ct | $co | **$bc** |
-          | **Human** | $(to_mb $hs) | $ht | $ho | **$hc** |
-          | **DockAI (Ours)** | $(to_mb $ds) | $dt | $do | **$dc** |
+          | **CNB (Baseline)** | $(to_mb $cs) | $ct | $co | **$bc** (Status: $cs_status) |
+          | **Human** | $(to_mb $hs) | $ht | $ho | **$hc** (Status: $hs_status) |
+          | **DockAI (Ours)** | $(to_mb $ds) | $dt | $do | **$dc** (Status: $ds_status) |
 
           ## 2. Mathematical Definition
           The **Composite Optimization Metric (\$C_{total}\$)** is calculated as:
@@ -389,6 +439,7 @@ jobs:
           EOF
 
       - name: Upload Research Data
+        if: always()
         uses: actions/upload-artifact@v5.0.0
         with:
           name: research-data
@@ -397,3 +448,4 @@ jobs:
             results.json
             trivy-*.json
             *_time.txt
+            *_status.txt
