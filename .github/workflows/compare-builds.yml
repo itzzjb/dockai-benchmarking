@@ -221,15 +221,23 @@ jobs:
                     --path "${TARGET_DIR}" \
                     --pull-policy if-not-present
 
-            - name: Lint Dockerfiles (hadolint action)
+            - name: Lint Human Dockerfile (hadolint)
               uses: hadolint/hadolint-action@v3.1.0
               with:
-                  dockerfile: |
-                      ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile
-                      ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile.dockai
+                  dockerfile: ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile
                   format: json
+                  output-file: hadolint-human.json
               continue-on-error: true
-              id: hadolint
+              id: hadolint_human
+
+            - name: Lint DockAI Dockerfile (hadolint)
+              uses: hadolint/hadolint-action@v3.1.0
+              with:
+                  dockerfile: ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile.dockai
+                  format: json
+                  output-file: hadolint-dockai.json
+              continue-on-error: true
+              id: hadolint_dockai
 
             - name: Trivy scan (Human)
               uses: aquasecurity/trivy-action@master
@@ -289,21 +297,9 @@ jobs:
                   read dockai_size dockai_layers < <(get_size_layers "${DOCKAI_IMG}")
                   read cnb_size cnb_layers < <(get_size_layers "${CNB_IMG}")
 
-                  # hadolint-action outputs a single JSON array even for multiple files; split if both exist
-                  split_hadolint() {
-                    local combined=$1 human_out=$2 dockai_out=$3
-                    if [ ! -f "$combined" ]; then
-                      echo "[]" > "$human_out"
-                      echo "[]" > "$dockai_out"
-                      return
-                    fi
-                    # naive split: filter by file path
-                    jq 'map(select(.file=="Dockerfile"))' "$combined" > "$human_out" || echo "[]" > "$human_out"
-                    jq 'map(select(.file=="Dockerfile.dockai"))' "$combined" > "$dockai_out" || echo "[]" > "$dockai_out"
-                  }
-
-                  # hadolint-action writes to hadolint.json by default when format=json
-                  split_hadolint hadolint.json hadolint-human.json hadolint-dockai.json
+                  # Ensure hadolint outputs exist even if the action skipped or failed
+                  [ -f hadolint-human.json ] || echo "[]" > hadolint-human.json
+                  [ -f hadolint-dockai.json ] || echo "[]" > hadolint-dockai.json
 
                   hadolint_count() { [ -f "$1" ] && jq 'length' "$1" || echo 0; }
                   trivy_totals() {
