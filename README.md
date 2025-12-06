@@ -1,123 +1,85 @@
-# DockAI Test Application
+# Benchmarking Methodology: The Composite Optimization Metric ($C_{final}$)
 
-This repository is designed to test the [DockAI](https://github.com/itzzjb/dockai) GitHub Action functionality.
+This document outlines the mathematical framework used to empirically evaluate the performance of AI-generated Dockerfiles ("DockAI") against Human-authored configurations and industry-standard Cloud Native Buildpacks (CNB).
 
-## 📋 Overview
+## 1. Overview
+To provide a holistic evaluation, we reject single-dimensional metrics (e.g., measuring only image size). Instead, we utilize a **Composite Cost Function** that balances three competing priorities in modern DevOps:
+1.  **Storage Efficiency** (Image Size)
+2.  **Pipeline Latency** (Build Time)
+3.  **Security Posture** (Vulnerability Exposure)
+4.  **Code Quality** (Static Analysis Compliance)
 
-DockAI is an AI-powered Dockerfile generation framework that analyzes codebases and creates optimized, production-ready Dockerfiles. This test repository automates the testing process by:
+## 2. The Core Equation
 
-1. Reading a target repository URL from `config.json`
-2. Checking out the target repository
-3. Running DockAI to generate a Dockerfile
-4. Validating and storing the generated Dockerfile
+The final score ($C_{final}$) is calculated as the sum of a normalized performance metric and a quality penalty. **A lower score indicates better performance.**
 
-## 🚀 Setup Instructions
+$$C_{final} = C_{total} + P_{quality}$$
 
-### 1. Configure Target Repository
+### 2.1 The Normalized Performance Metric ($C_{total}$)
+We compare the Model (Human or DockAI) against the Baseline (CNB). All values are normalized to a ratio, where $1.0$ represents the baseline performance.
 
-Edit `config.json` to specify the repository you want to generate a Dockerfile for:
+$$C_{total} = W_{size} \cdot \left( \frac{S_{model}}{S_{baseline}} \right) + W_{time} \cdot \left( \frac{T_{model}}{T_{baseline}} \right) + W_{sec} \cdot \left( \frac{\Omega_{model}}{\Omega_{baseline}} \right)$$
 
-```json
-{
-  "repository_url": "https://github.com/owner/repo-name"
-}
-```
+Where:
+* $S$ = **Image Size** (MB)
+* $T$ = **Build Time** (Seconds)
+* $\Omega$ = **Vulnerability Index** (See Section 3)
 
-**Note:** Replace `owner/repo-name` with the actual repository path (without the `https://github.com/` prefix).
+### 2.2 Weight Distribution
+Weights ($W$) are assigned based on **DevSecOps best practices**, prioritizing security above all else.
 
-### 2. Add OpenAI API Key
+| Parameter | Weight ($W$) | Justification |
+| :--- | :--- | :--- |
+| **Security ($\Omega$)** | **0.5 (50%)** | In production environments, vulnerabilities are critical blockers. Mitigation is the highest priority. |
+| **Size ($S$)** | **0.3 (30%)** | Smaller images reduce registry storage costs and speed up Kubernetes node provisioning. |
+| **Time ($T$)** | **0.2 (20%)** | While build speed is important for CI feedback loops, it is secondary to runtime security and efficiency. |
 
-The GitHub Action requires an OpenAI API key to function:
+---
 
-1. Go to your repository **Settings** → **Secrets and variables** → **Actions**
-2. Click **New repository secret**
-3. Name: `OPENAI_API_KEY`
-4. Value: Your OpenAI API key (starts with `sk-`)
-5. Click **Add secret**
+## 3. The Vulnerability Index ($\Omega$)
+Raw vulnerability counts are misleading (a Critical CVE is worse than 10 Low CVEs). We calculate a weighted index using **Trivy** scan results:
 
-Alternatively, you can use other LLM providers supported by DockAI:
-- Google Gemini (`GOOGLE_API_KEY`)
-- Anthropic Claude (`ANTHROPIC_API_KEY`)
-- Azure OpenAI (`AZURE_OPENAI_API_KEY`)
-- Ollama (for local/self-hosted)
+$$\Omega = (10 \times N_{critical}) + (5 \times N_{high}) + (2 \times N_{medium}) + (1 \times N_{low})$$
 
-### 3. Run the Test
+* $N_{severity}$ represents the count of CVEs at that severity level.
 
-The workflow can be triggered in three ways:
+---
 
-- **Push to main branch:** Automatically runs on every push
-- **Pull request:** Runs on PR creation/update
-- **Manual trigger:** Go to Actions → Test DockAI Action → Run workflow
+## 4. The Quality Penalty ($P_{quality}$)
+To ensure the generated code adheres to syntactic best practices, we run **Hadolint** (Haskell Dockerfile Linter). The model is penalized for every violation found.
 
-## 📄 Files
+$$P_{quality} = (0.1 \times N_{errors}) + (0.05 \times N_{warnings})$$
 
-- `config.json` - Configuration file containing the target repository URL
-- `.github/workflows/test-dockai.yml` - GitHub Action workflow definition
-- `README.md` - This file
+* **Errors** (e.g., Invalid syntax) incur a heavy penalty (+0.1).
+* **Warnings** (e.g., Not pinning versions) incur a moderate penalty (+0.05).
 
-## 🔍 What the Workflow Does
+---
 
-1. **Checkout** - Clones this test repository
-2. **Read Config** - Extracts the target repository URL from `config.json`
-3. **Checkout Target** - Clones the target repository to `target-repo/` directory
-4. **Run DockAI** - Executes the DockAI action to generate a Dockerfile
-5. **Verify** - Checks if the Dockerfile was created successfully
-6. **Upload Artifact** - Saves the generated Dockerfile for download (available for 30 days)
+## 5. Example Calculation (Real Data)
+*Data extracted from Report ID: `run-16606-dockai`*
 
-## 📦 Downloading the Generated Dockerfile
+**Baseline (CNB) Data:**
+* Size: 263.25 MB
+* Time: 37s
+* Security Index ($\Omega$): 747
 
-After the workflow completes:
+**DockAI Data:**
+* Size: 166.06 MB
+* Time: 1s
+* Security Index ($\Omega$): 67
+* Hadolint Errors: 0
 
-1. Go to the **Actions** tab in your repository
-2. Click on the completed workflow run
-3. Scroll down to **Artifacts** section
-4. Download the `generated-dockerfile` artifact
+**Step 1: Normalization**
+* $\hat{S} = 166.06 / 263.25 \approx 0.63$
+* $\hat{T} = 1 / 37 \approx 0.03$
+* $\hat{\Omega} = 67 / 747 \approx 0.09$
 
-## ⚙️ Customization
+**Step 2: Weighted Sum ($C_{total}$)**
+$$C_{total} = (0.3 \times 0.63) + (0.2 \times 0.03) + (0.5 \times 0.09)$$
+$$C_{total} = 0.189 + 0.006 + 0.045 = \mathbf{0.240}$$
 
-You can modify the workflow to:
+**Step 3: Final Score**
+Since there were 0 Hadolint errors, $P_{quality} = 0$.
+$$C_{final} = 0.240 + 0 = \mathbf{0.240}$$
 
-- Change the LLM provider (see [DockAI documentation](https://github.com/itzzjb/dockai#-configuration))
-- Adjust retry attempts (`max_retries`)
-- Enable strict security mode (`strict_security: true`)
-- Skip security scans for faster testing
-
-Example with Google Gemini:
-
-```yaml
-- name: Run DockAI to generate Dockerfile
-  uses: itzzjb/dockai@v3
-  with:
-    llm_provider: gemini
-    google_api_key: ${{ secrets.GOOGLE_API_KEY }}
-    project_path: target-repo
-```
-
-## 📚 Resources
-
-- [DockAI Repository](https://github.com/itzzjb/dockai)
-- [DockAI Documentation](https://itzzjb.github.io/dockai/)
-- [GitHub Actions Guide](https://github.com/itzzjb/dockai/blob/main/docs/github-actions.md)
-
-## 🐛 Troubleshooting
-
-### Workflow fails with "Invalid repository_url"
-
-Ensure `config.json` contains the repository path without the `https://github.com/` prefix:
-- ✅ Correct: `"owner/repo-name"`
-- ❌ Incorrect: `"https://github.com/owner/repo-name"`
-
-### Workflow fails with API key error
-
-Make sure you've added the correct API key as a repository secret with the exact name expected by the workflow.
-
-### DockAI generates but validation fails
-
-The target repository might have complex requirements. Check the workflow logs for details and consider:
-- Increasing `max_retries`
-- Reviewing DockAI's output for specific errors
-- Checking if the target repository has special dependencies
-
-## 📝 License
-
-MIT License - This is a test repository for DockAI functionality.
+**Conclusion:** DockAI (0.240) performs $\approx 76\%$ better than the Industry Standard (1.0).
