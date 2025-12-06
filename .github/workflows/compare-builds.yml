@@ -346,18 +346,18 @@ jobs:
 
           cat > "${REPORT_PATH}" <<EOF
           # Empirical Evaluation Report
-          **Method:** Composite Optimization Metric ($C_{total}$) with Hadolint Penalty ($C_{final}$)
+          **Method:** Composite Optimization Metric (\$C_{total}\$) with Hadolint Penalty (\$C_{final}\$)
           **Winner:** ${winner}
 
-          ## 1. Executive Summary (Lower $C_{final}$ is Better)
-          | Method | Size (MB) | Build Time (s) | Sec. Index ($\Omega$) | **$C_{final}$ Score** |
+          ## 1. Executive Summary (Lower \$C_{final}\$ is Better)
+          | Method | Size (MB) | Build Time (s) | Sec. Index (\$\\Omega\$) | **\$C_{final}\$ Score** |
           | :--- | :--- | :--- | :--- | :--- |
           | **CNB (Baseline)** | $(to_mb $cs) | $ct | $co | **$bc** |
           | **Human** | $(to_mb $hs) | $ht | $ho | **$hc** |
           | **DockAI (Ours)** | $(to_mb $ds) | $dt | $do | **$dc** |
 
           ## 2. Mathematical Definition
-          The **Composite Optimization Metric ($C_{total}$)** is calculated as:
+          The **Composite Optimization Metric (\$C_{total}\$)** is calculated as:
           $$C_{total} = 0.3 \cdot \hat{S} + 0.2 \cdot \hat{T} + 0.5 \cdot \hat{V}$$
 
           The **Static Analysis Penalty** from Hadolint is:
@@ -367,8 +367,8 @@ jobs:
           $$C_{final} = C_{total} + Penalty$$
 
           Where:
-          * $\hat{S}, \hat{T}, \hat{V}$ are normalized ratios against the CNB baseline.
-          * Security Index ($\Omega$) = $(10 \times Crit) + (5 \times High) + (2 \times Med) + (1 \times Low)$
+          * \$\hat{S}, \hat{T}, \hat{V}\$ are normalized ratios against the CNB baseline.
+          * Security Index (\$\Omega\$) = \$(10 \times Crit) + (5 \times High) + (2 \times Med) + (1 \times Low)\$
           * Hadolint Errors/Warnings are counted from the JSON lint reports.
 
           ## 3. Raw Data (For Paper)
