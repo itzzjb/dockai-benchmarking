@@ -86,13 +86,34 @@ jobs:
                   auth_url="${{ steps.repo.outputs.auth_clone_url }}"
                   base_url="${{ steps.repo.outputs.clone_url }}"
 
+                  chosen_url="$auth_url"
+                  if [ -z "$chosen_url" ]; then
+                    chosen_url="$base_url"
+                  fi
+
+                  clone_branch() {
+                    local branch=$1
+                    git clone --depth=1 --branch "$branch" "$chosen_url" "${TARGET_DIR}"
+                  }
+
+                  clone_default() {
+                    git clone --depth=1 "$chosen_url" "${TARGET_DIR}"
+                  }
+
                   if [ -n "$ref" ]; then
-                    git clone --depth=1 --branch "$ref" "$auth_url" "${TARGET_DIR}" || {
+                    clone_branch "$ref" || {
                       echo "Clone with --branch $ref failed; retrying default without --branch" >&2
-                      git clone --depth=1 "$auth_url" "${TARGET_DIR}"
+                      rm -rf "${TARGET_DIR}"
+                      clone_default || {
+                        echo "Clone failed. If this is a private repo, ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
+                        exit 128
+                      }
                     }
                   else
-                    git clone --depth=1 "$auth_url" "${TARGET_DIR}"
+                    clone_default || {
+                      echo "Clone failed. If this is a private repo, ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
+                      exit 128
+                    }
                   fi
 
                   # Remove embedded credentials from the local remote URL
