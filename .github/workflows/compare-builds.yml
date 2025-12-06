@@ -204,10 +204,40 @@ jobs:
             ' "$f" || echo 0
           }
 
+          # Hadolint error/warning counters (safe on missing/empty files)
+          get_lint_counts() {
+            local f="$1"
+            if [ ! -s "$f" ]; then echo "0 0"; return; fi
+            jq -r '
+              reduce .[]? as $i ([0,0];
+                if ($i.level == "error") then [.[0]+1, .[1]]
+                elif ($i.level == "warning" or $i.level == "info") then [.[0], .[1]+1]
+                else . end
+              ) | @tsv
+            ' "$f" 2>/dev/null || echo "0 0"
+          }
+
+          calc_penalty() {
+            local errs="${1:-0}"
+            local warns="${2:-0}"
+            awk -v e="$errs" -v w="$warns" 'BEGIN {printf "%.4f", (e*0.1) + (w*0.05)}'
+          }
+
+          calc_final() {
+            local base="${1:-0}"
+            local pen="${2:-0}"
+            awk -v b="$base" -v p="$pen" 'BEGIN {printf "%.4f", b + p}'
+          }
+
           # Get Raw Values
           h_size=$(get_size "${HUMAN_IMG}"); h_time=$(get_time human_time.txt); h_omega=$(get_omega trivy-human.json)
           d_size=$(get_size "${DOCKAI_IMG}"); d_time=$(get_time dockai_time.txt); d_omega=$(get_omega trivy-dockai.json)
           c_size=$(get_size "${CNB_IMG}");    c_time=$(get_time cnb_time.txt);   c_omega=$(get_omega trivy-cnb.json)
+
+          # Lint counts
+          read h_err h_warn <<< "$(get_lint_counts hadolint-human.json)"
+          read d_err d_warn <<< "$(get_lint_counts hadolint-dockai.json)"
+          read c_err c_warn <<< "$(get_lint_counts hadolint-cnb.json)"
 
           # Coerce missing or non-positive values to safe defaults to avoid awk/bc errors
           default_zero() { local v="$1"; [ -z "$v" ] && echo 0 || echo "$v"; }
@@ -219,6 +249,10 @@ jobs:
           h_size=$(default_zero "$h_size"); h_time=$(default_zero "$h_time"); h_omega=$(default_zero "$h_omega")
           d_size=$(default_zero "$d_size"); d_time=$(default_zero "$d_time"); d_omega=$(default_zero "$d_omega")
           c_size=$(default_one "$c_size");  c_time=$(default_one "$c_time");  c_omega=$(default_one "$c_omega")
+
+          h_err=$(default_zero "$h_err"); h_warn=$(default_zero "$h_warn")
+          d_err=$(default_zero "$d_err"); d_warn=$(default_zero "$d_warn")
+          c_err=$(default_zero "$c_err"); c_warn=$(default_zero "$c_warn")
 
           # 2. ZERO-DIVISION PROTECTION (For Baseline)
           # If any baseline metric is 0, set it to 1 to allow division
@@ -257,6 +291,15 @@ jobs:
 
           c_score="1.0000"
 
+          # 4. HADOLINT PENALTIES AND FINAL COST
+          h_penalty=$(calc_penalty "$h_err" "$h_warn")
+          d_penalty=$(calc_penalty "$d_err" "$d_warn")
+          c_penalty=$(calc_penalty "$c_err" "$c_warn")
+
+          h_final=$(calc_final "$h_score" "$h_penalty")
+          d_final=$(calc_final "$d_score" "$d_penalty")
+          c_final=$(calc_final "$c_score" "$c_penalty")
+
           # Safe float comparison that tolerates bc parse failures
           safe_lt() {
             local a="${1:-}"
@@ -266,26 +309,28 @@ jobs:
             [ "$cmp" -gt 0 ]
           }
 
-          # 4. DETERMINE WINNER
+          # 5. DETERMINE WINNER (uses final score including penalty)
           winner="CNB (Baseline)"
-          lowest=$c_score
+          lowest=$c_final
 
           # Use bc for float comparison
-          if safe_lt "$h_score" "$lowest"; then lowest=$h_score; winner="Human"; fi
-          if safe_lt "$d_score" "$lowest"; then lowest=$d_score; winner="DockAI"; fi
+          if safe_lt "$h_final" "$lowest"; then lowest=$h_final; winner="Human"; fi
+          if safe_lt "$d_final" "$lowest"; then lowest=$d_final; winner="DockAI"; fi
 
           # Export
           echo "winner=$winner" >> "$GITHUB_ENV"
 
           # Debug output
-          echo "Scores -> CNB: $c_score, Human: $h_score, DockAI: $d_score"
+          echo "Scores (base) -> CNB: $c_score, Human: $h_score, DockAI: $d_score"
+          echo "Penalties -> CNB: $c_penalty, Human: $h_penalty, DockAI: $d_penalty"
+          echo "Final -> CNB: $c_final, Human: $h_final, DockAI: $d_final"
 
           # Generate JSON
           cat <<EOF > results.json
           {
-            "baseline": {"size": $c_size, "time": $c_time, "omega": $c_omega, "cost": 1.0},
-            "human": {"size": $h_size, "time": $h_time, "omega": $h_omega, "cost": $h_score},
-            "dockai": {"size": $d_size, "time": $d_time, "omega": $d_omega, "cost": $d_score}
+            "baseline": {"size": $c_size, "time": $c_time, "omega": $c_omega, "errors": $c_err, "warnings": $c_warn, "penalty": $c_penalty, "cost": $c_final},
+            "human": {"size": $h_size, "time": $h_time, "omega": $h_omega, "errors": $h_err, "warnings": $h_warn, "penalty": $h_penalty, "cost": $h_final},
+            "dockai": {"size": $d_size, "time": $d_time, "omega": $d_omega, "errors": $d_err, "warnings": $d_warn, "penalty": $d_penalty, "cost": $d_final}
           }
           EOF
 
@@ -297,17 +342,17 @@ jobs:
           # Read JSON
           hs=$(jq '.human.size' results.json); ht=$(jq '.human.time' results.json); ho=$(jq '.human.omega' results.json); hc=$(jq '.human.cost' results.json)
           ds=$(jq '.dockai.size' results.json); dt=$(jq '.dockai.time' results.json); do=$(jq '.dockai.omega' results.json); dc=$(jq '.dockai.cost' results.json)
-          cs=$(jq '.baseline.size' results.json); ct=$(jq '.baseline.time' results.json); co=$(jq '.baseline.omega' results.json)
+          cs=$(jq '.baseline.size' results.json); ct=$(jq '.baseline.time' results.json); co=$(jq '.baseline.omega' results.json); bc=$(jq '.baseline.cost' results.json)
 
           cat > "${REPORT_PATH}" <<EOF
           # Empirical Evaluation Report
-          **Method:** Composite Optimization Metric ($C_{total}$)
+          **Method:** Composite Optimization Metric ($C_{total}$) with Hadolint Penalty ($C_{final}$)
           **Winner:** ${winner}
 
-          ## 1. Executive Summary (Lower $C_{total}$ is Better)
-          | Method | Size (MB) | Build Time (s) | Sec. Index ($\Omega$) | **$C_{total}$ Score** |
+          ## 1. Executive Summary (Lower $C_{final}$ is Better)
+          | Method | Size (MB) | Build Time (s) | Sec. Index ($\Omega$) | **$C_{final}$ Score** |
           | :--- | :--- | :--- | :--- | :--- |
-          | **CNB (Baseline)** | $(to_mb $cs) | $ct | $co | **1.0000** |
+          | **CNB (Baseline)** | $(to_mb $cs) | $ct | $co | **$bc** |
           | **Human** | $(to_mb $hs) | $ht | $ho | **$hc** |
           | **DockAI (Ours)** | $(to_mb $ds) | $dt | $do | **$dc** |
 
@@ -315,9 +360,16 @@ jobs:
           The **Composite Optimization Metric ($C_{total}$)** is calculated as:
           $$C_{total} = 0.3 \cdot \hat{S} + 0.2 \cdot \hat{T} + 0.5 \cdot \hat{V}$$
 
+          The **Static Analysis Penalty** from Hadolint is:
+          $$Penalty = 0.1 \cdot Errors + 0.05 \cdot Warnings$$
+
+          The final score adds this penalty:
+          $$C_{final} = C_{total} + Penalty$$
+
           Where:
           * $\hat{S}, \hat{T}, \hat{V}$ are normalized ratios against the CNB baseline.
           * Security Index ($\Omega$) = $(10 \times Crit) + (5 \times High) + (2 \times Med) + (1 \times Low)$
+          * Hadolint Errors/Warnings are counted from the JSON lint reports.
 
           ## 3. Raw Data (For Paper)
           \`\`\`json
