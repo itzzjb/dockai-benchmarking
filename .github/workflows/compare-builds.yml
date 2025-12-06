@@ -30,17 +30,21 @@ jobs:
             - name: Checkout workflow repo
               uses: actions/checkout@v4
 
-            - name: Install tooling (jq, curl, trivy, pack)
+            - name: Install jq
               run: |
                   set -euo pipefail
                   sudo apt-get update
-                  sudo apt-get install -y jq curl ca-certificates
+                  sudo apt-get install -y jq
 
-                  # trivy
-                  curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+            - name: Set up Trivy
+              uses: aquasecurity/trivy-action@master
+              with:
+                  version: latest
 
-                  # pack
-                  curl -sSL "https://github.com/buildpacks/pack/releases/download/${PACK_VERSION}/pack-${PACK_VERSION}-linux.tgz" | sudo tar -xz -C /usr/local/bin pack
+            - name: Set up pack CLI
+              uses: buildpacks/github-actions/setup-pack@v5.7.1
+              with:
+                  pack-version: ${{ env.PACK_VERSION }}
 
             - name: Resolve repository and branch
               id: repo
@@ -216,58 +220,45 @@ jobs:
                     --path "${TARGET_DIR}" \
                     --pull-policy if-not-present
 
-            - name: Lint Dockerfiles (hadolint via container)
-              env:
-                  HADOLINT_IMAGE: hadolint/hadolint:latest
-              run: |
-                  set -euo pipefail
-                  dl_image() {
-                    docker pull "$HADOLINT_IMAGE" >/dev/null
-                  }
-                  dl_image
+            - name: Lint Dockerfiles (hadolint action)
+              uses: hadolint/hadolint-action@v3.1.0
+              with:
+                  dockerfile: |
+                      ${TARGET_DIR}/Dockerfile
+                      ${TARGET_DIR}/Dockerfile.dockai
+                  format: json
+              continue-on-error: true
+              id: hadolint
 
-                  run_hadolint() {
-                    local file=$1 out=$2 label=$3
-                    if [ ! -f "$file" ]; then
-                      echo "[]" > "$out"
-                      echo "hadolint skipped (missing): $label" >&2
-                      return
-                    fi
+            - name: Trivy scan (Human)
+              uses: aquasecurity/trivy-action@master
+              with:
+                  image-ref: ${{ env.HUMAN_IMG }}
+                  format: json
+                  output: trivy-human.json
+                  exit-code: 0
+                  severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
+                  ignore-unfixed: false
 
-                    # hadolint exits 1 when findings exist; still acceptable. Treat >=2 as failure.
-                    if docker run --rm -i "$HADOLINT_IMAGE" hadolint --format json - < "$file" > "$out"; then
-                      status=0
-                    else
-                      status=$?
-                    fi
+            - name: Trivy scan (DockAI)
+              uses: aquasecurity/trivy-action@master
+              with:
+                  image-ref: ${{ env.DOCKAI_IMG }}
+                  format: json
+                  output: trivy-dockai.json
+                  exit-code: 0
+                  severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
+                  ignore-unfixed: false
 
-                    count=$(jq 'length' "$out" 2>/dev/null || echo 0)
-                    echo "hadolint $label exit=$status findings=$count"
-
-                    if [ "$status" -ge 2 ]; then
-                      echo "hadolint failed (status $status) for $label" >&2
-                      exit $status
-                    fi
-                  }
-
-                  run_hadolint "${TARGET_DIR}/Dockerfile" hadolint-human.json "Human"
-                  run_hadolint "${TARGET_DIR}/Dockerfile.dockai" hadolint-dockai.json "DockAI"
-
-            - name: Trivy scans
-              run: |
-                  set -euo pipefail
-                  scan() {
-                    local image=$1
-                    local out=$2
-                    if docker image inspect "$image" >/dev/null 2>&1; then
-                      trivy image --quiet --format json --output "$out" "$image"
-                    else
-                      echo '{"Results":[]}' > "$out"
-                    fi
-                  }
-                  scan "${HUMAN_IMG}" trivy-human.json
-                  scan "${DOCKAI_IMG}" trivy-dockai.json
-                  scan "${CNB_IMG}" trivy-cnb.json
+            - name: Trivy scan (CNB)
+              uses: aquasecurity/trivy-action@master
+              with:
+                  image-ref: ${{ env.CNB_IMG }}
+                  format: json
+                  output: trivy-cnb.json
+                  exit-code: 0
+                  severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
+                  ignore-unfixed: false
 
             - name: Calculate scores and report
               id: report
@@ -296,6 +287,22 @@ jobs:
                   read human_size human_layers < <(get_size_layers "${HUMAN_IMG}")
                   read dockai_size dockai_layers < <(get_size_layers "${DOCKAI_IMG}")
                   read cnb_size cnb_layers < <(get_size_layers "${CNB_IMG}")
+
+                  # hadolint-action outputs a single JSON array even for multiple files; split if both exist
+                  split_hadolint() {
+                    local combined=$1 human_out=$2 dockai_out=$3
+                    if [ ! -f "$combined" ]; then
+                      echo "[]" > "$human_out"
+                      echo "[]" > "$dockai_out"
+                      return
+                    fi
+                    # naive split: filter by file path
+                    jq 'map(select(.file=="Dockerfile"))' "$combined" > "$human_out" || echo "[]" > "$human_out"
+                    jq 'map(select(.file=="Dockerfile.dockai"))' "$combined" > "$dockai_out" || echo "[]" > "$dockai_out"
+                  }
+
+                  # hadolint-action writes to hadolint.json by default when format=json
+                  split_hadolint hadolint.json hadolint-human.json hadolint-dockai.json
 
                   hadolint_count() { [ -f "$1" ] && jq 'length' "$1" || echo 0; }
                   trivy_totals() {
