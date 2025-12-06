@@ -234,10 +234,10 @@ jobs:
           d_size=$(get_size "${DOCKAI_IMG}"); d_time=$(get_time dockai_time.txt); d_omega=$(get_omega trivy-dockai.json)
           c_size=$(get_size "${CNB_IMG}");    c_time=$(get_time cnb_time.txt);   c_omega=$(get_omega trivy-cnb.json)
 
-          # Lint counts
-          read h_err h_warn <<< "$(get_lint_counts hadolint-human.json)"
-          read d_err d_warn <<< "$(get_lint_counts hadolint-dockai.json)"
-          read c_err c_warn <<< "$(get_lint_counts hadolint-cnb.json)"
+          # Lint counts (tolerate empty output from jq)
+          if ! read h_err h_warn <<< "$(get_lint_counts hadolint-human.json)"; then h_err=0; h_warn=0; fi
+          if ! read d_err d_warn <<< "$(get_lint_counts hadolint-dockai.json)"; then d_err=0; d_warn=0; fi
+          if ! read c_err c_warn <<< "$(get_lint_counts hadolint-cnb.json)"; then c_err=0; c_warn=0; fi
 
           # Coerce missing or non-positive values to safe defaults to avoid awk/bc errors
           default_zero() { local v="$1"; [ -z "$v" ] && echo 0 || echo "$v"; }
@@ -285,9 +285,9 @@ jobs:
              }'
           }
 
-          # Calculate Human & DockAI Scores
-          read h_score h_ns h_nt h_nw < <(calc_metrics "$h_size" "$h_time" "$h_omega" "$c_size" "$c_time" "$c_omega")
-          read d_score d_ns d_nt d_nw < <(calc_metrics "$d_size" "$d_time" "$d_omega" "$c_size" "$c_time" "$c_omega")
+          # Calculate Human & DockAI Scores (fallback to zeros if calc fails)
+          if ! read h_score h_ns h_nt h_nw < <(calc_metrics "$h_size" "$h_time" "$h_omega" "$c_size" "$c_time" "$c_omega"); then h_score=0; h_ns=0; h_nt=0; h_nw=0; fi
+          if ! read d_score d_ns d_nt d_nw < <(calc_metrics "$d_size" "$d_time" "$d_omega" "$c_size" "$c_time" "$c_omega"); then d_score=0; d_ns=0; d_nt=0; d_nw=0; fi
 
           c_score="1.0000"
 
