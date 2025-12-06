@@ -65,7 +65,21 @@ jobs:
 
                   default_branch=$(git ls-remote --symref "$auth_clone_url" HEAD 2>/dev/null | awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@' | head -n1)
                   if [ -z "$default_branch" ]; then
-                    default_branch="main"
+                    default_branch=$(git ls-remote --symref "$clone_url" HEAD 2>/dev/null | awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@' | head -n1)
+                  fi
+                  if [ -z "$default_branch" ]; then
+                    # Try common defaults
+                    if git ls-remote --heads "$auth_clone_url" main >/dev/null 2>&1; then
+                      default_branch="main"
+                    elif git ls-remote --heads "$auth_clone_url" master >/dev/null 2>&1; then
+                      default_branch="master"
+                    else
+                      # Fallback to first available head
+                      default_branch=$(git ls-remote --heads "$auth_clone_url" 2>/dev/null | awk '{print $2}' | sed 's@refs/heads/@@' | head -n1)
+                      if [ -z "$default_branch" ]; then
+                        default_branch="main"
+                      fi
+                    fi
                   fi
 
                   checkout_ref="$default_branch"
@@ -87,8 +101,8 @@ jobs:
                   GIT_TERMINAL_PROMPT: 0
               run: |
                   set -euo pipefail
-                  set -x
                   rm -rf "${TARGET_DIR}"
+
                   ref="${{ steps.repo.outputs.checkout_ref }}"
                   auth_url="${{ steps.repo.outputs.auth_clone_url }}"
                   base_url="${{ steps.repo.outputs.clone_url }}"
@@ -101,6 +115,7 @@ jobs:
                   echo "Using ref='$ref'" >&2
                   echo "Clone URL (masked if tokenized)='$chosen_url'" >&2
 
+                  # Pre-flight branch existence; try ref, then main/master if ref is empty
                   if [ -n "$ref" ]; then
                     if ! git ls-remote --heads "$chosen_url" "$ref" >/dev/null 2>&1; then
                       echo "Requested ref '$ref' not found; falling back to default with no --branch" >&2
@@ -117,20 +132,37 @@ jobs:
                     git clone --depth=1 "$chosen_url" "${TARGET_DIR}"
                   }
 
+                  # Try requested or default ref first; then fall back to main/master; then any first branch; finally plain clone
+                  success=false
                   if [ -n "$ref" ]; then
-                    clone_branch "$ref" || {
-                      echo "Clone with --branch $ref failed; retrying default without --branch" >&2
-                      rm -rf "${TARGET_DIR}"
-                      clone_default || {
-                        echo "Clone failed. If this is a private repo, ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
-                        exit 128
-                      }
-                    }
-                  else
-                    clone_default || {
-                      echo "Clone failed. If this is a private repo, ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
-                      exit 128
-                    }
+                    clone_branch "$ref" && success=true || echo "Clone with --branch $ref failed" >&2
+                  fi
+
+                  if [ "$success" = false ]; then
+                    for fallback in main master; do
+                      if git ls-remote --heads "$chosen_url" "$fallback" >/dev/null 2>&1; then
+                        echo "Attempting fallback branch '$fallback'" >&2
+                        clone_branch "$fallback" && success=true && break
+                      fi
+                    done
+                  fi
+
+                  if [ "$success" = false ]; then
+                    first_branch=$(git ls-remote --heads "$chosen_url" 2>/dev/null | awk '{print $2}' | sed 's@refs/heads/@@' | head -n1)
+                    if [ -n "$first_branch" ]; then
+                      echo "Attempting fallback first branch '$first_branch'" >&2
+                      clone_branch "$first_branch" && success=true
+                    fi
+                  fi
+
+                  if [ "$success" = false ]; then
+                    echo "Attempting clone without --branch" >&2
+                    clone_default && success=true
+                  fi
+
+                  if [ "$success" = false ]; then
+                    echo "Clone failed. If this is a private repo, ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
+                    exit 128
                   fi
 
                   # Remove embedded credentials from the local remote URL
