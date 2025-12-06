@@ -252,10 +252,12 @@ jobs:
                   read cnb_trivy_total cnb_trivy_critical cnb_trivy_high cnb_trivy_medium cnb_trivy_low < <(trivy_totals trivy-cnb.json)
 
                   score() {
-                    python -c $'import sys\n'
-                                  $'sz=float(sys.argv[1]); layers=float(sys.argv[2]); had=float(sys.argv[3]); tvt=float(sys.argv[4]); tvh=float(sys.argv[5]); tvc=float(sys.argv[6])\n'
-                                  $'score=max(0, 100 - (sz/1024/1024)*0.08 - layers*1.2 - had*0.4 - tvt*0.18 - tvh*0.7 - tvc*1.2)\n'
-                                  $'print(round(score, 2))'
+                    python - "$@" <<'PY'
+                    import sys
+                    sz=float(sys.argv[1]); layers=float(sys.argv[2]); had=float(sys.argv[3]); tvt=float(sys.argv[4]); tvh=float(sys.argv[5]); tvc=float(sys.argv[6])
+                    score=max(0, 100 - (sz/1024/1024)*0.08 - layers*1.2 - had*0.4 - tvt*0.18 - tvh*0.7 - tvc*1.2)
+                    print(round(score, 2))
+                    PY
                   }
 
                   human_score=$(score "$human_size" "$human_layers" "$human_hadolint" "$human_trivy_total" "$human_trivy_high" "$human_trivy_critical")
@@ -266,9 +268,16 @@ jobs:
                   if awk "BEGIN {exit !($human_score > $best)}"; then best=$human_score; winner="Human"; fi
                   if awk "BEGIN {exit !($cnb_score > $best)}"; then best=$cnb_score; winner="CNB"; fi
 
-                  bytes_to_mb() {
-                    python -c $'import sys\nval=sys.argv[1]\ntry:\n    print(round(int(val)/(1024*1024), 2))\nexcept Exception:\n    print(0)'
-                  }
+                    bytes_to_mb() {
+                    python - "$@" <<'PY'
+                    import sys
+                    val=sys.argv[1]
+                    try:
+                      print(round(int(val)/(1024*1024), 2))
+                    except Exception:
+                      print(0)
+                    PY
+                    }
 
                   human_mb=$(bytes_to_mb "$human_size")
                   dockai_mb=$(bytes_to_mb "$dockai_size")
