@@ -32,6 +32,7 @@ jobs:
               run: |
                   set -euo pipefail
                   input_repo="${{ github.event.inputs.repo_url }}"
+                  input_branch="${{ github.event.inputs.branch }}"
                   config_repo=$(jq -r '.repository_url // empty' config.json)
 
                   repo="${input_repo:-$config_repo}"
@@ -47,14 +48,29 @@ jobs:
                     *) clone_url="https://github.com/${repo}" ;;
                   esac
 
+                  default_branch=$(git ls-remote --symref "$clone_url" HEAD | awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@' | head -n1)
+                  if [ -z "$default_branch" ]; then
+                    default_branch="main"
+                  fi
+
+                  checkout_ref="$default_branch"
+                  if [ -n "$input_branch" ]; then
+                    if git ls-remote --heads "$clone_url" "$input_branch" >/dev/null 2>&1; then
+                      checkout_ref="$input_branch"
+                    else
+                      echo "Requested branch '$input_branch' not found; falling back to '$default_branch'" >&2
+                    fi
+                  fi
+
                   echo "clone_url=$clone_url" >> "$GITHUB_OUTPUT"
                   echo "repo_label=$repo" >> "$GITHUB_OUTPUT"
+                  echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
 
             - name: Checkout target repo
               run: |
                   set -euo pipefail
                   rm -rf "${TARGET_DIR}"
-                  git clone --depth=1 --branch "${{ github.event.inputs.branch }}" "${{ steps.repo.outputs.clone_url }}" "${TARGET_DIR}"
+                  git clone --depth=1 --branch "${{ steps.repo.outputs.checkout_ref }}" "${{ steps.repo.outputs.clone_url }}" "${TARGET_DIR}"
 
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@v3
