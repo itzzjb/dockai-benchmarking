@@ -37,7 +37,7 @@ jobs:
           sudo apt-get install -y jq
 
       - name: Set up Trivy CLI (latest v0 tag)
-        uses: aquasecurity/setup-trivy@v0
+        uses: aquasecurity/setup-trivy@v0.3.1
         with:
           version: latest
           cache: true
