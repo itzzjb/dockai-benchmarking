@@ -30,27 +30,6 @@ jobs:
                   repository: ${{ steps.read-config.outputs.repo_url }}
                   path: target-repo
 
-            - name: Create .dockai config for target repo
-              run: |
-                  cat > target-repo/.dockai << 'EOF'
-                  [instructions_generator]
-                  CRITICAL REQUIREMENTS:
-                  1. Use python:3.7-slim as base image (Pipfile.lock requires Python 3.7)
-                  2. Install system build packages BEFORE running pip or pipenv:
-                     - build-essential
-                     - gcc
-                     - python3-dev
-                     - libffi-dev
-                     - libssl-dev
-                     - libpq-dev
-                  3. Use multi-stage build: builder stage for compilation, runtime for just the app
-                  4. In runtime stage, install only runtime libraries (libpq5, libssl, libffi)
-                  5. Use pip to install from requirements.txt
-                  6. Run container as non-root user
-                  7. Use gunicorn as WSGI server from Procfile
-                  8. Bind to 0.0.0.0:$PORT for proper port handling
-                  EOF
-
             - name: Run DockAI to generate Dockerfile
               uses: itzzjb/dockai@v3
               with:
