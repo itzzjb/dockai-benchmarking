@@ -225,8 +225,8 @@ jobs:
               uses: hadolint/hadolint-action@v3.1.0
               with:
                   dockerfile: |
-                      ${{ env.TARGET_DIR }}/Dockerfile
-                      ${{ env.TARGET_DIR }}/Dockerfile.dockai
+                      ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile
+                      ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile.dockai
                   format: json
               continue-on-error: true
               id: hadolint
