@@ -105,31 +105,23 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "${TARGET_DIR}"
+
+          base_url="${{ steps.repo.outputs.clone_url }}"
+          auth_url="${{ steps.repo.outputs.auth_clone_url }}"
           ref="${{ steps.repo.outputs.branch }}"
-            printf '%s\n' \
-              'Winner | Score | Size (MB) | Critical | High | Medium | Low' \
-              '--- | --- | --- | --- | --- | --- | ---' \
-              "Human | ${human_score} | ${human_mb} | ${human_trivy_critical} | ${human_trivy_high} | ${human_trivy_medium} | ${human_trivy_low}" \
-              "DockAI | ${dockai_score} | ${dockai_mb} | ${dockai_trivy_critical} | ${dockai_trivy_high} | ${dockai_trivy_medium} | ${dockai_trivy_low}" \
-              "CNB | ${cnb_score} | ${cnb_mb} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low}" \
-              > "$report"
-          chosen_url="$auth_url"
-          }
-          success=false
-          fi
-            if [ -n "$first_branch" ]; then
-            echo "report_path=$report" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-          if [ "$success" = false ]; then
-            echo "Trying clone without --branch" >&2
-            try_clone_default && success=true
-          fi
-          if [ "$success" = false ]; then
-            echo "Clone failed. Ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
-            exit 128
+
+          clone_url="$auth_url"
+          if [ -z "$clone_url" ]; then
+            clone_url="$base_url"
           fi
 
+          if [ -n "$ref" ]; then
+            git clone --depth 1 --branch "$ref" "$clone_url" "${TARGET_DIR}"
+          else
+            git clone --depth 1 "$clone_url" "${TARGET_DIR}"
+          fi
+
+          # Reset remote to non-auth URL to avoid leaking tokens later
           git -C "${TARGET_DIR}" remote set-url origin "$base_url"
 
       - name: Backup human Dockerfile (if present)
@@ -237,7 +229,7 @@ jobs:
           done
 
       - name: Trivy scan (Human)
-        uses: aquasecurity/trivy-action@v0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.HUMAN_IMG }}
           format: json
@@ -247,7 +239,7 @@ jobs:
           ignore-unfixed: false
 
       - name: Trivy scan (DockAI)
-        uses: aquasecurity/trivy-action@v0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.DOCKAI_IMG }}
           format: json
@@ -257,7 +249,7 @@ jobs:
           ignore-unfixed: false
 
       - name: Trivy scan (CNB)
-        uses: aquasecurity/trivy-action@v0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.CNB_IMG }}
           format: json
