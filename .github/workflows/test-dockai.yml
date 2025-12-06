@@ -35,7 +35,15 @@ jobs:
               with:
                   openai_api_key: ${{ secrets.OPENAI_API_KEY }}
                   project_path: target-repo
-                  max_retries: 3
+                  max_retries: 5
+                  generator_instructions: |
+                      This Flask application requires the following system packages for building Python dependencies:
+                      - gcc (C compiler)
+                      - python3-dev (Python development headers)
+                      - libffi-dev (FFI library for ctypes)
+                      - libssl-dev (SSL/TLS toolkit)
+                      - build-essential (essential build tools)
+                      Install these packages in the builder stage before running pipenv install.
 
             - name: Check if Dockerfile was generated
               run: |
