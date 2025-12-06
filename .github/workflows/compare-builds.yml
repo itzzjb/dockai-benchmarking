@@ -181,23 +181,27 @@ jobs:
         run: |
           set -e
 
-          # 1. READ RAW METRICS
+          # 1. ROBUST METRIC EXTRACTION
           get_size() { docker image inspect "$1" --format '{{.Size}}' 2>/dev/null || echo 0; }
           get_time() { cat "$1" 2>/dev/null || echo 0; }
 
-          # Security Index Calculation: (10*Crit + 5*High + 2*Med + 1*Low)
+          # Security Index Calculation (Fixed for null .Results)
           get_omega() {
             local f=$1
-            if [ ! -s "$f" ] || [ "$(cat "$f")" = "{}" ]; then echo 0; return; fi
+            # Check if file exists and has content
+            if [ ! -s "$f" ]; then echo 0; return; fi
+            
+            # Run jq with error handling (|| echo 0)
+            # Added '?' after .Results[] to prevent crash if Results is null
             jq -r '
-              reduce (.Results[].Vulnerabilities[]? // empty) as $v (0; 
+              reduce (.Results[]?.Vulnerabilities[]? // empty) as $v (0; 
                 if $v.Severity == "CRITICAL" then . + 10
                 elif $v.Severity == "HIGH" then . + 5
                 elif $v.Severity == "MEDIUM" then . + 2
                 elif $v.Severity == "LOW" then . + 1
                 else . end
               )
-            ' "$f"
+            ' "$f" || echo 0
           }
 
           # Get Raw Values
@@ -205,15 +209,22 @@ jobs:
           d_size=$(get_size "${DOCKAI_IMG}"); d_time=$(get_time dockai_time.txt); d_omega=$(get_omega trivy-dockai.json)
           c_size=$(get_size "${CNB_IMG}");    c_time=$(get_time cnb_time.txt);   c_omega=$(get_omega trivy-cnb.json)
 
-          # Avoid Divide by Zero for Baseline (CNB)
-          [ "$c_size" -eq 0 ] && c_size=1
-          [ "$c_time" -eq 0 ] && c_time=1
-          [ "$c_omega" -eq 0 ] && c_omega=1
+          # 2. ZERO-DIVISION PROTECTION (For Baseline)
+          # If any baseline metric is 0, set it to 1 to allow division
+          [ "$c_size" -le 0 ] && c_size=1
+          [ "$c_time" -le 0 ] && c_time=1
+          [ "$c_omega" -le 0 ] && c_omega=1
 
-          # 2. CALCULATE NORMALIZED METRICS (Baseline = CNB)
-          # awk is used for floating point precision
+          echo "DEBUG: Baseline - Size:$c_size Time:$c_time Omega:$c_omega"
+
+          # 3. CALCULATE METRICS (Awk)
           calc_metrics() {
-             awk -v s="$1" -v t="$2" -v w="$3" \
+             # Ensure inputs are not empty strings, default to 0
+             local s="${1:-0}"
+             local t="${2:-0}"
+             local w="${3:-0}"
+             
+             awk -v s="$s" -v t="$t" -v w="$w" \
                  -v bs="$4" -v bt="$5" -v bw="$6" \
                  -v ws="$W_SIZE" -v wt="$W_TIME" -v ww="$W_SEC" '
              BEGIN {
@@ -222,30 +233,34 @@ jobs:
                nt = t / bt
                nw = w / bw
                
-               # Composite Cost Function (Lower is Better)
+               # Composite Cost Function
                ctotal = (ws * ns) + (wt * nt) + (ww * nw)
                
                printf "%.4f %.4f %.4f %.4f", ctotal, ns, nt, nw
              }'
           }
 
+          # Calculate Human & DockAI Scores
           read h_score h_ns h_nt h_nw < <(calc_metrics "$h_size" "$h_time" "$h_omega" "$c_size" "$c_time" "$c_omega")
           read d_score d_ns d_nt d_nw < <(calc_metrics "$d_size" "$d_time" "$d_omega" "$c_size" "$c_time" "$c_omega")
-          # CNB Score is always 1.0 by definition
+
           c_score="1.0000"
 
-          # 3. DETERMINE WINNER (Lowest Score Wins)
+          # 4. DETERMINE WINNER
           winner="CNB (Baseline)"
           lowest=$c_score
 
-          # Compare Float Strings
+          # Use bc for float comparison
           if (( $(echo "$h_score < $lowest" | bc -l) )); then lowest=$h_score; winner="Human"; fi
           if (( $(echo "$d_score < $lowest" | bc -l) )); then lowest=$d_score; winner="DockAI"; fi
 
-          # Export for Report
+          # Export
           echo "winner=$winner" >> "$GITHUB_ENV"
 
-          # Export JSON for the Math Slide
+          # Debug output
+          echo "Scores -> CNB: $c_score, Human: $h_score, DockAI: $d_score"
+
+          # Generate JSON
           cat <<EOF > results.json
           {
             "baseline": {"size": $c_size, "time": $c_time, "omega": $c_omega, "cost": 1.0},
