@@ -1,4 +1,4 @@
 {
-  "repository_url": "https://github.com/devenes/node-js-dummy-test",
+  "repository_url": "https://github.com/ubc/flask-sample-app",
   "description": "Configuration file for dockai GitHub Action testing. Replace repository_url with the actual repository you want to generate a Dockerfile for."
 }
