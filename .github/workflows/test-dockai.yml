@@ -1,0 +1,55 @@
+name: Test DockAI Action
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+
+jobs:
+    test-dockai:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout test repository
+              uses: actions/checkout@v4
+
+            - name: Read config.json
+              id: read-config
+              run: |
+                  REPO_URL=$(jq -r '.repository_url' config.json)
+                  echo "repo_url=$REPO_URL" >> $GITHUB_OUTPUT
+                  echo "Target repository: $REPO_URL"
+
+            - name: Checkout target repository
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ steps.read-config.outputs.repo_url }}
+                  path: target-repo
+
+            - name: Run DockAI to generate Dockerfile
+              uses: itzzjb/dockai@v3
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: target-repo
+                  max_retries: 3
+
+            - name: Check if Dockerfile was generated
+              run: |
+                  if [ -f target-repo/Dockerfile ]; then
+                    echo "✅ Dockerfile successfully generated!"
+                    echo "Contents:"
+                    cat target-repo/Dockerfile
+                  else
+                    echo "❌ Dockerfile was not generated"
+                    exit 1
+                  fi
+
+            - name: Upload generated Dockerfile
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: generated-dockerfile
+                  path: target-repo/Dockerfile
+                  retention-days: 30
