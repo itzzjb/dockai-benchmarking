@@ -1,0 +1,159 @@
+name: Compare DockAI vs Human vs CNB
+
+on:
+    workflow_dispatch:
+
+jobs:
+    compare:
+        runs-on: ubuntu-latest
+
+        env:
+            TARGET_DIR: target-repo
+            HUMAN_IMG: human-image:latest
+            DOCKAI_IMG: dockai-image:latest
+            CNB_IMG: cnb-image:latest
+
+        steps:
+            - name: Checkout orchestrator repo
+              uses: actions/checkout@v4
+
+            - name: Read config.json for target repo
+              id: cfg
+              run: |
+                  REPO_URL=$(jq -r '.repository_url' config.json)
+                  REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
+                  echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
+                  echo "REPO_PATH=$REPO_PATH" >> $GITHUB_ENV
+                  echo "Target: $REPO_PATH"
+
+            - name: Checkout target repository
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ steps.cfg.outputs.repo_path }}
+                  path: ${{ env.TARGET_DIR }}
+
+            - name: Preserve human Dockerfile if present
+              run: |
+                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+                    cp "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.human"
+                  fi
+
+            - name: Generate DockAI Dockerfile
+              uses: itzzjb/dockai@v3
+              with:
+                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+                  project_path: ${{ env.TARGET_DIR }}
+                  max_retries: 5
+                  model_analyzer: gpt-4o-mini
+                  model_blueprint: gpt-4o-mini
+                  model_generator: gpt-4o-mini
+                  model_generator_iterative: gpt-4o-mini
+                  model_reviewer: gpt-4o-mini
+                  model_reflector: gpt-4o-mini
+                  model_error_analyzer: gpt-4o-mini
+                  model_iterative_improver: gpt-4o-mini
+
+            - name: Keep DockAI Dockerfile alongside human
+              run: |
+                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+                    mv "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.dockai"
+                  fi
+                  if [ -f "${TARGET_DIR}/Dockerfile.human" ]; then
+                    mv "${TARGET_DIR}/Dockerfile.human" "${TARGET_DIR}/Dockerfile"
+                  fi
+
+            - name: Build human image (if Dockerfile exists)
+              run: |
+                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+                    docker build -t ${HUMAN_IMG} ${TARGET_DIR}
+                  else
+                    echo "No human Dockerfile; skipping human build"
+                  fi
+
+            - name: Build DockAI image
+              run: |
+                  if [ -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
+                    docker build -f ${TARGET_DIR}/Dockerfile.dockai -t ${DOCKAI_IMG} ${TARGET_DIR}
+                  else
+                    echo "Missing DockAI Dockerfile" && exit 1
+                  fi
+
+            - name: Install pack CLI
+              uses: buildpacks/pack-action@v5
+
+            - name: Build CNB image
+              run: |
+                  pack build ${CNB_IMG} \
+                    --path ${TARGET_DIR} \
+                    --builder paketobuildpacks/builder:base \
+                    --pull-policy if-not-present
+
+            - name: Collect metrics and compare
+              id: metrics
+              run: |
+                  set -e
+                  report=report.md
+                  human_from="N/A"; dockai_from="N/A"
+                  [ -f "${TARGET_DIR}/Dockerfile" ] && human_from=$(grep -m1 '^FROM ' "${TARGET_DIR}/Dockerfile" | awk '{print $2}')
+                  [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && dockai_from=$(grep -m1 '^FROM ' "${TARGET_DIR}/Dockerfile.dockai" | awk '{print $2}')
+
+                  get_size_layers() {
+                    img=$1
+                    if docker image inspect "$img" >/dev/null 2>&1; then
+                      size=$(docker image inspect "$img" --format '{{.Size}}')
+                      layers=$(docker history "$img" --no-trunc | tail -n +2 | wc -l)
+                    else
+                      size=0; layers=0
+                    fi
+                    echo "$size $layers"
+                  }
+
+                  read human_size human_layers < <(get_size_layers ${HUMAN_IMG})
+                  read dockai_size dockai_layers < <(get_size_layers ${DOCKAI_IMG})
+                  read cnb_size cnb_layers < <(get_size_layers ${CNB_IMG})
+
+                  score() {
+                    sz_bytes=$1
+                    layers=$2
+                    raw=$(python -c "sz=${sz_bytes}; layers=${layers}; print(max(0, 100 - (sz/1024/1024)*0.1 - layers*1.5))")
+                    echo "$raw"
+                  }
+
+                  human_score=$(score $human_size $human_layers)
+                  dockai_score=$(score $dockai_size $dockai_layers)
+                  cnb_score=$(score $cnb_size $cnb_layers)
+
+                  cat > "$report" <<'EOF'
+                  # Container Build Comparison
+
+                  ## Inputs
+                  - Target repository: ${REPO_PATH}
+
+                  ## Dockerfile origins
+                  - Human Dockerfile: ${human_from}
+                  - DockAI Dockerfile: ${dockai_from}
+                  - CNB Buildpacks: paketobuildpacks/builder:base
+
+                  ## Image Metrics
+                  | Image | Size (bytes) | Layers | Score (lower size & layers = higher) |
+                  | --- | --- | --- | --- |
+                  | Human | ${human_size} | ${human_layers} | ${human_score} |
+                  | DockAI | ${dockai_size} | ${dockai_layers} | ${dockai_score} |
+                  | CNB | ${cnb_size} | ${cnb_layers} | ${cnb_score} |
+
+                  ## Notes
+                  - Scores are: 100 - 0.1*sizeMB - 1.5*layers (floored at 0).
+                  - Higher score indicates smaller image and fewer layers.
+                  - Base images extracted from first FROM line.
+                  EOF
+
+                  echo "report_path=$report" >> $GITHUB_OUTPUT
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: comparison-report
+                  path: |
+                      report.md
+                      ${{ env.TARGET_DIR }}/Dockerfile
+                      ${{ env.TARGET_DIR }}/Dockerfile.dockai
