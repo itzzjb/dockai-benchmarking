@@ -259,7 +259,11 @@ jobs:
                   read cnb_trivy_total cnb_trivy_critical cnb_trivy_high cnb_trivy_medium cnb_trivy_low < <(trivy_totals trivy-cnb.json)
 
                   score() {
-                    python - "$@" -c "import sys; sz=float(sys.argv[1]); layers=float(sys.argv[2]); had=float(sys.argv[3]); tvt=float(sys.argv[4]); tvh=float(sys.argv[5]); tvc=float(sys.argv[6]); score=max(0, 100 - (sz/1024/1024)*0.08 - layers*1.2 - had*0.4 - tvt*0.18 - tvh*0.7 - tvc*1.2); print(round(score, 2))"
+                    awk -v sz="$1" -v layers="$2" -v had="$3" -v tvt="$4" -v tvh="$5" -v tvc="$6" 'BEGIN {
+                      score = 100 - (sz/1024/1024)*0.08 - layers*1.2 - had*0.4 - tvt*0.18 - tvh*0.7 - tvc*1.2;
+                      if (score < 0) score = 0;
+                      printf "%.2f", score;
+                    }'
                   }
 
                   human_score=$(score "$human_size" "$human_layers" "$human_hadolint" "$human_trivy_total" "$human_trivy_high" "$human_trivy_critical")
@@ -271,7 +275,10 @@ jobs:
                   if awk "BEGIN {exit !($cnb_score > $best)}"; then best=$cnb_score; winner="CNB"; fi
 
                   bytes_to_mb() {
-                    python - "$@" -c "import sys; val=sys.argv[1];\ntry: print(round(int(val)/(1024*1024), 2))\nexcept Exception: print(0)"
+                    awk -v v="$1" 'BEGIN {
+                      if (v ~ /^[0-9]+$/) { printf "%.2f", v/1024/1024; }
+                      else { printf "0"; }
+                    }'
                   }
 
                   human_mb=$(bytes_to_mb "$human_size")
