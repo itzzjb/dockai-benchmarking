@@ -143,6 +143,7 @@ jobs:
               run: |
                   set -e
                   report=report.md
+
                   human_from="N/A"; dockai_from="N/A"
                   [ -f "${TARGET_DIR}/Dockerfile" ] && human_from=$(grep -m1 '^FROM ' "${TARGET_DIR}/Dockerfile" | awk '{print $2}')
                   [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && dockai_from=$(grep -m1 '^FROM ' "${TARGET_DIR}/Dockerfile.dockai" | awk '{print $2}')
@@ -163,13 +164,9 @@ jobs:
                   read cnb_size cnb_layers < <(get_size_layers ${CNB_IMG})
 
                   human_hadolint="N/A"
-                  if [ -f hadolint-human.json ]; then
-                    human_hadolint=$(jq 'length' hadolint-human.json)
-                  fi
+                  [ -f hadolint-human.json ] && human_hadolint=$(jq 'length' hadolint-human.json)
                   dockai_hadolint="N/A"
-                  if [ -f hadolint-dockai.json ]; then
-                    dockai_hadolint=$(jq 'length' hadolint-dockai.json)
-                  fi
+                  [ -f hadolint-dockai.json ] && dockai_hadolint=$(jq 'length' hadolint-dockai.json)
 
                   trivy_totals() {
                     file=$1
@@ -197,16 +194,7 @@ jobs:
 
                   score() {
                     sz_bytes=$1; layers=$2; hadocnt=$3; trivytotal=$4; trivyhigh=$5
-                    python - <<'PY'
-                    import os
-                    sz_bytes=float(os.environ.get("SZ",0))
-                    layers=float(os.environ.get("LAYERS",0))
-                    hadocnt=float(os.environ.get("HADO",0))
-                    trivyt=float(os.environ.get("TRIVY_T",0))
-                    trivyh=float(os.environ.get("TRIVY_H",0))
-                    score=max(0, 100 - (sz_bytes/1024/1024)*0.1 - layers*1.5 - hadocnt*0.5 - trivyt*0.25 - trivyh*1.0)
-                    print(score)
-                    PY
+                    python -c "import os; sz=float(os.environ.get('SZ',0)); layers=float(os.environ.get('LAYERS',0)); had=float(os.environ.get('HADO',0)); tvt=float(os.environ.get('TRIVY_T',0)); tvh=float(os.environ.get('TRIVY_H',0)); score=max(0, 100 - (sz/1024/1024)*0.1 - layers*1.5 - had*0.5 - tvt*0.25 - tvh*1.0); print(score)" "$@"
                   }
 
                   human_score=$(SZ=$human_size LAYERS=$human_layers HADO=$(to_num $human_hadolint) TRIVY_T=$(to_num $human_trivy_total) TRIVY_H=$(to_num $human_trivy_high) score)
@@ -243,6 +231,7 @@ jobs:
                     '- Higher score rewards smaller images, fewer layers, and fewer lint/vuln findings.' \
                     '- Base images extracted from first FROM line.' \
                     > "$report"
+
                   echo "report_path=$report" >> $GITHUB_OUTPUT
 
             - name: Upload artifacts
