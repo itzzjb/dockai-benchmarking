@@ -4,182 +4,37 @@ on:
     workflow_dispatch:
         inputs:
             repo_url:
-                description: "Target repository (owner/repo or full https URL)"
+                description: "Override repository URL (owner/repo or full https URL). Defaults to config.json repository_url"
                 required: false
                 default: ""
             branch:
-                description: "Branch or ref to check out"
+                description: "Branch or ref to build (optional)"
                 required: false
-                default: "main"
+                default: ""
 
 jobs:
     compare:
         name: Build and Benchmark Images
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         env:
             TARGET_DIR: target-repo
             REPORT_PATH: report.md
-            HUMAN_IMG: human-candidate:latest
-            DOCKAI_IMG: dockai-candidate:latest
-            CNB_IMG: cnb-candidate:latest
+            HUMAN_IMG: human:compare
+            DOCKAI_IMG: dockai:compare
+            CNB_IMG: cnb:compare
             PACK_VERSION: v0.34.2
+
         steps:
             - name: Checkout workflow repo
               uses: actions/checkout@v4
 
-            - name: Install jq for config parsing
-              run: |
-                  set -euo pipefail
-                  sudo apt-get update
-                  sudo apt-get install -y jq
-
-            - name: Resolve target repo
-              id: repo
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: |
-                  set -euo pipefail
-                  input_repo="${{ github.event.inputs.repo_url }}"
-                  input_branch="${{ github.event.inputs.branch }}"
-                  config_repo=$(jq -r '.repository_url // empty' config.json)
-
-                  repo="${input_repo:-$config_repo}"
-                  if [ -z "$repo" ] || [ "$repo" = "null" ]; then
-                    echo "Repository not provided via input or config.json" >&2
-                    exit 1
-                  fi
-
-                  # Normalize to https URL for cloning
-                  case "$repo" in
-                    http*) clone_url="$repo" ;;
-                    git@*) clone_url="$repo" ;;
-                    *) clone_url="https://github.com/${repo}" ;;
-                  esac
-
-                  # Use a tokenized URL for private repos, but mask it to avoid leakage
-                  auth_clone_url="$clone_url"
-                  if [ -n "${GITHUB_TOKEN:-}" ] && [[ "$clone_url" =~ ^https://github.com/ ]]; then
-                    echo "::add-mask::${GITHUB_TOKEN}"
-                    auth_clone_url="https://${GITHUB_ACTOR:-github-actions}:${GITHUB_TOKEN}@github.com/${repo}"
-                  fi
-
-                  default_branch=$(git ls-remote --symref "$auth_clone_url" HEAD 2>/dev/null | awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@' | head -n1)
-                  if [ -z "$default_branch" ]; then
-                    default_branch=$(git ls-remote --symref "$clone_url" HEAD 2>/dev/null | awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@' | head -n1)
-                  fi
-                  if [ -z "$default_branch" ]; then
-                    # Try common defaults
-                    if git ls-remote --heads "$auth_clone_url" main >/dev/null 2>&1; then
-                      default_branch="main"
-                    elif git ls-remote --heads "$auth_clone_url" master >/dev/null 2>&1; then
-                      default_branch="master"
-                    else
-                      # Fallback to first available head
-                      default_branch=$(git ls-remote --heads "$auth_clone_url" 2>/dev/null | awk '{print $2}' | sed 's@refs/heads/@@' | head -n1)
-                      if [ -z "$default_branch" ]; then
-                        default_branch="main"
-                      fi
-                    fi
-                  fi
-
-                  checkout_ref="$default_branch"
-                  if [ -n "$input_branch" ]; then
-                    if git ls-remote --heads "$auth_clone_url" "$input_branch" >/dev/null 2>&1; then
-                      checkout_ref="$input_branch"
-                    else
-                      echo "Requested branch '$input_branch' not found; falling back to '$default_branch'" >&2
-                    fi
-                  fi
-
-                  echo "clone_url=$clone_url" >> "$GITHUB_OUTPUT"
-                  echo "auth_clone_url=$auth_clone_url" >> "$GITHUB_OUTPUT"
-                  echo "repo_label=$repo" >> "$GITHUB_OUTPUT"
-                  echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
-
-            - name: Checkout target repo
-              env:
-                  GIT_TERMINAL_PROMPT: 0
-              run: |
-                  set -euo pipefail
-                  rm -rf "${TARGET_DIR}"
-
-                  ref="${{ steps.repo.outputs.checkout_ref }}"
-                  auth_url="${{ steps.repo.outputs.auth_clone_url }}"
-                  base_url="${{ steps.repo.outputs.clone_url }}"
-
-                  chosen_url="$auth_url"
-                  if [ -z "$chosen_url" ]; then
-                    chosen_url="$base_url"
-                  fi
-
-                  echo "Using ref='$ref'" >&2
-                  echo "Clone URL (masked if tokenized)='$chosen_url'" >&2
-
-                  # Pre-flight branch existence; try ref, then main/master if ref is empty
-                  if [ -n "$ref" ]; then
-                    if ! git ls-remote --heads "$chosen_url" "$ref" >/dev/null 2>&1; then
-                      echo "Requested ref '$ref' not found; falling back to default with no --branch" >&2
-                      ref=""
-                    fi
-                  fi
-
-                  clone_branch() {
-                    local branch=$1
-                    git clone --depth=1 --branch "$branch" "$chosen_url" "${TARGET_DIR}"
-                  }
-
-                  clone_default() {
-                    git clone --depth=1 "$chosen_url" "${TARGET_DIR}"
-                  }
-
-                  # Try requested or default ref first; then fall back to main/master; then any first branch; finally plain clone
-                  success=false
-                  if [ -n "$ref" ]; then
-                    clone_branch "$ref" && success=true || echo "Clone with --branch $ref failed" >&2
-                  fi
-
-                  if [ "$success" = false ]; then
-                    for fallback in main master; do
-                      if git ls-remote --heads "$chosen_url" "$fallback" >/dev/null 2>&1; then
-                        echo "Attempting fallback branch '$fallback'" >&2
-                        clone_branch "$fallback" && success=true && break
-                      fi
-                    done
-                  fi
-
-                  if [ "$success" = false ]; then
-                    first_branch=$(git ls-remote --heads "$chosen_url" 2>/dev/null | awk '{print $2}' | sed 's@refs/heads/@@' | head -n1)
-                    if [ -n "$first_branch" ]; then
-                      echo "Attempting fallback first branch '$first_branch'" >&2
-                      clone_branch "$first_branch" && success=true
-                    fi
-                  fi
-
-                  if [ "$success" = false ]; then
-                    echo "Attempting clone without --branch" >&2
-                    clone_default && success=true
-                  fi
-
-                  if [ "$success" = false ]; then
-                    echo "Clone failed. If this is a private repo, ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
-                    exit 128
-                  fi
-
-                  # Remove embedded credentials from the local remote URL
-                  git -C "${TARGET_DIR}" remote set-url origin "$base_url"
-
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v3
-
-            - name: Install toolchain (hadolint, trivy, pack)
+            - name: Install tooling (jq, curl, trivy, pack)
               run: |
                   set -euo pipefail
                   sudo apt-get update
                   sudo apt-get install -y jq curl ca-certificates
-
-                  # hadolint
-                  curl -sSL https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 -o hadolint
-                  sudo install -m 0755 hadolint /usr/local/bin/hadolint
 
                   # trivy
                   curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
@@ -187,16 +42,118 @@ jobs:
                   # pack
                   curl -sSL "https://github.com/buildpacks/pack/releases/download/${PACK_VERSION}/pack-${PACK_VERSION}-linux.tgz" | sudo tar -xz -C /usr/local/bin pack
 
+            - name: Resolve repository and branch
+              id: repo
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  input_repo="${{ github.event.inputs.repo_url }}"
+                  input_branch="${{ github.event.inputs.branch }}"
+
+                  config_repo=$(jq -r '.repository_url // empty' config.json)
+                  repo_url="${input_repo:-$config_repo}"
+
+                  if [ -z "$repo_url" ]; then
+                    echo "repository_url is required (config.json or repo_url input)" >&2
+                    exit 1
+                  fi
+
+                  case "$repo_url" in
+                    http*) clone_url="$repo_url" ;;
+                    git@*) clone_url="$repo_url" ;;
+                    *) clone_url="https://github.com/${repo_url}" ;;
+                  esac
+
+                  # Auth URL if token available (masked)
+                  auth_clone_url="$clone_url"
+                  if [ -n "${GITHUB_TOKEN:-}" ] && [[ "$clone_url" =~ ^https://github.com/ ]]; then
+                    echo "::add-mask::${GITHUB_TOKEN}"
+                    auth_clone_url="https://${GITHUB_ACTOR:-github-actions}:${GITHUB_TOKEN}@${clone_url#https://}"
+                  fi
+
+                  # Build candidate branches: requested, HEAD, main, master, first head
+                  candidates=()
+                  if [ -n "$input_branch" ]; then candidates+=("$input_branch"); fi
+                  head_ref=$(git ls-remote --symref "$auth_clone_url" HEAD 2>/dev/null | awk '/^ref:/ {print $2}' | sed 's@refs/heads/@@')
+                  if [ -n "$head_ref" ]; then candidates+=("$head_ref"); fi
+                  candidates+=(main master)
+                  first_head=$(git ls-remote --heads "$auth_clone_url" 2>/dev/null | awk '{print $2}' | sed 's@refs/heads/@@' | head -n1)
+                  if [ -n "$first_head" ]; then candidates+=("$first_head"); fi
+
+                  chosen_branch=""
+                  for b in "${candidates[@]}"; do
+                    if git ls-remote --heads "$auth_clone_url" "$b" >/dev/null 2>&1; then
+                      chosen_branch="$b"
+                      break
+                    fi
+                  done
+
+                  echo "clone_url=$clone_url" >> "$GITHUB_OUTPUT"
+                  echo "auth_clone_url=$auth_clone_url" >> "$GITHUB_OUTPUT"
+                  echo "repo_label=$repo_url" >> "$GITHUB_OUTPUT"
+                  echo "branch=$chosen_branch" >> "$GITHUB_OUTPUT"
+
+            - name: Checkout target repo
+              env:
+                  GIT_TERMINAL_PROMPT: 0
+              run: |
+                  set -euo pipefail
+                  rm -rf "${TARGET_DIR}"
+                  ref="${{ steps.repo.outputs.branch }}"
+                  auth_url="${{ steps.repo.outputs.auth_clone_url }}"
+                  base_url="${{ steps.repo.outputs.clone_url }}"
+                  chosen_url="$auth_url"
+                  if [ -z "$chosen_url" ]; then chosen_url="$base_url"; fi
+
+                  try_clone() {
+                    git clone --depth=1 --branch "$1" "$chosen_url" "${TARGET_DIR}"
+                  }
+                  try_clone_default() {
+                    git clone --depth=1 "$chosen_url" "${TARGET_DIR}"
+                  }
+
+                  success=false
+                  if [ -n "$ref" ]; then
+                    try_clone "$ref" && success=true || echo "Clone failed on ref '$ref'" >&2
+                  fi
+                  if [ "$success" = false ] && git ls-remote --heads "$chosen_url" main >/dev/null 2>&1; then
+                    echo "Trying fallback 'main'" >&2
+                    try_clone main && success=true
+                  fi
+                  if [ "$success" = false ] && git ls-remote --heads "$chosen_url" master >/dev/null 2>&1; then
+                    echo "Trying fallback 'master'" >&2
+                    try_clone master && success=true
+                  fi
+                  if [ "$success" = false ]; then
+                    first_branch=$(git ls-remote --heads "$chosen_url" 2>/dev/null | awk '{print $2}' | sed 's@refs/heads/@@' | head -n1)
+                    if [ -n "$first_branch" ]; then
+                      echo "Trying first available branch '$first_branch'" >&2
+                      try_clone "$first_branch" && success=true
+                    fi
+                  fi
+                  if [ "$success" = false ]; then
+                    echo "Trying clone without --branch" >&2
+                    try_clone_default && success=true
+                  fi
+                  if [ "$success" = false ]; then
+                    echo "Clone failed. Ensure GITHUB_TOKEN has access or provide repo_url/branch inputs." >&2
+                    exit 128
+                  fi
+
+                  git -C "${TARGET_DIR}" remote set-url origin "$base_url"
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
             - name: Detect Dockerfiles
               id: detect
               run: |
                   set -euo pipefail
                   human_present=false
                   dockai_present=false
-
                   [ -f "${TARGET_DIR}/Dockerfile" ] && human_present=true
                   [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && dockai_present=true
-
                   echo "human_present=$human_present" >> "$GITHUB_OUTPUT"
                   echo "dockai_present=$dockai_present" >> "$GITHUB_OUTPUT"
 
@@ -204,160 +161,151 @@ jobs:
               if: steps.detect.outputs.human_present == 'true'
               run: |
                   set -euo pipefail
-                  docker build --file "${TARGET_DIR}/Dockerfile" --tag ${HUMAN_IMG} "${TARGET_DIR}"
+                  docker build --file "${TARGET_DIR}/Dockerfile" --tag "${HUMAN_IMG}" "${TARGET_DIR}"
 
             - name: Build DockAI Dockerfile
               if: steps.detect.outputs.dockai_present == 'true'
               run: |
                   set -euo pipefail
-                  docker build --file "${TARGET_DIR}/Dockerfile.dockai" --tag ${DOCKAI_IMG} "${TARGET_DIR}"
+                  docker build --file "${TARGET_DIR}/Dockerfile.dockai" --tag "${DOCKAI_IMG}" "${TARGET_DIR}"
 
-            - name: Build CNB image
+            - name: Build CNB image (pack)
               run: |
                   set -euo pipefail
-                  pack build ${CNB_IMG} \
+                  pack build "${CNB_IMG}" \
                     --builder paketobuildpacks/builder:base \
                     --path "${TARGET_DIR}" \
                     --pull-policy if-not-present
 
-            - name: Lint human Dockerfile
-              if: steps.detect.outputs.human_present == 'true'
+            - name: Lint Dockerfiles (hadolint via container)
               run: |
                   set -euo pipefail
-                  hadolint "${TARGET_DIR}/Dockerfile" -f json > hadolint-human.json || true
+                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+                    docker run --rm -i hadolint/hadolint hadolint --format json - < "${TARGET_DIR}/Dockerfile" > hadolint-human.json || true
+                  fi
+                  if [ -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
+                    docker run --rm -i hadolint/hadolint hadolint --format json - < "${TARGET_DIR}/Dockerfile.dockai" > hadolint-dockai.json || true
+                  fi
 
-            - name: Lint DockAI Dockerfile
-              if: steps.detect.outputs.dockai_present == 'true'
+            - name: Trivy scans
               run: |
                   set -euo pipefail
-                  hadolint "${TARGET_DIR}/Dockerfile.dockai" -f json > hadolint-dockai.json || true
+                  scan() {
+                    local image=$1
+                    local out=$2
+                    if docker image inspect "$image" >/dev/null 2>&1; then
+                      trivy image --quiet --format json --output "$out" "$image"
+                    else
+                      echo '{"Results":[]}' > "$out"
+                    fi
+                  }
+                  scan "${HUMAN_IMG}" trivy-human.json
+                  scan "${DOCKAI_IMG}" trivy-dockai.json
+                  scan "${CNB_IMG}" trivy-cnb.json
 
-            - name: Trivy scan human image
-              if: steps.detect.outputs.human_present == 'true'
+            - name: Calculate scores and report
+              id: report
               run: |
                   set -euo pipefail
-                  trivy image --quiet --format json -o trivy-human.json ${HUMAN_IMG}
-
-            - name: Trivy scan DockAI image
-              if: steps.detect.outputs.dockai_present == 'true'
-              run: |
-                  set -euo pipefail
-                  trivy image --quiet --format json -o trivy-dockai.json ${DOCKAI_IMG}
-
-            - name: Trivy scan CNB image
-              run: |
-                  set -euo pipefail
-                  trivy image --quiet --format json -o trivy-cnb.json ${CNB_IMG}
-
-            - name: Collect metrics and compare
-              id: metrics
-              run: |
-                  set -euo pipefail
-                  report=${REPORT_PATH}
+                  report="${REPORT_PATH}"
 
                   human_from="N/A"; dockai_from="N/A"
                   [ -f "${TARGET_DIR}/Dockerfile" ] && human_from=$(grep -m1 '^FROM ' "${TARGET_DIR}/Dockerfile" | awk '{print $2}')
                   [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && dockai_from=$(grep -m1 '^FROM ' "${TARGET_DIR}/Dockerfile.dockai" | awk '{print $2}')
 
                   get_size_layers() {
-                    img=$1
+                    local img=$1
                     if docker image inspect "$img" >/dev/null 2>&1; then
-                      size=$(docker image inspect "$img" --format '{{.Size}}')
-                      layers=$(docker history "$img" --no-trunc | tail -n +2 | wc -l)
+                      local size; size=$(docker image inspect "$img" --format '{{.Size}}')
+                      local layers; layers=$(docker history "$img" --no-trunc | tail -n +2 | wc -l)
+                      echo "$size $layers"
                     else
-                      size=0; layers=0
+                      echo "0 0"
                     fi
-                    echo "$size $layers"
                   }
 
-                  read human_size human_layers < <(get_size_layers ${HUMAN_IMG})
-                  read dockai_size dockai_layers < <(get_size_layers ${DOCKAI_IMG})
-                  read cnb_size cnb_layers < <(get_size_layers ${CNB_IMG})
+                  read human_size human_layers < <(get_size_layers "${HUMAN_IMG}")
+                  read dockai_size dockai_layers < <(get_size_layers "${DOCKAI_IMG}")
+                  read cnb_size cnb_layers < <(get_size_layers "${CNB_IMG}")
 
-                  human_hadolint="N/A"
-                  [ -f hadolint-human.json ] && human_hadolint=$(jq 'length' hadolint-human.json)
-                  dockai_hadolint="N/A"
-                  [ -f hadolint-dockai.json ] && dockai_hadolint=$(jq 'length' hadolint-dockai.json)
-
+                  hadolint_count() { [ -f "$1" ] && jq 'length' "$1" || echo 0; }
                   trivy_totals() {
-                    file=$1
+                    local file=$1
                     if [ -f "$file" ]; then
+                      local total crit high med low
                       total=$(jq '[.Results[].Vulnerabilities[]?] | length' "$file")
-                      critical=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$file")
+                      crit=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$file")
                       high=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "$file")
-                      medium=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' "$file")
+                      med=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' "$file")
                       low=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="LOW")] | length' "$file")
-                      echo "$total $critical $high $medium $low"
+                      echo "$total $crit $high $med $low"
                     else
-                      echo "N/A N/A N/A N/A N/A"
+                      echo "0 0 0 0 0"
                     fi
                   }
+
+                  human_hadolint=$(hadolint_count hadolint-human.json)
+                  dockai_hadolint=$(hadolint_count hadolint-dockai.json)
 
                   read human_trivy_total human_trivy_critical human_trivy_high human_trivy_medium human_trivy_low < <(trivy_totals trivy-human.json)
                   read dockai_trivy_total dockai_trivy_critical dockai_trivy_high dockai_trivy_medium dockai_trivy_low < <(trivy_totals trivy-dockai.json)
                   read cnb_trivy_total cnb_trivy_critical cnb_trivy_high cnb_trivy_medium cnb_trivy_low < <(trivy_totals trivy-cnb.json)
 
-                  to_num() {
-                    val=$1
-                    if echo "$val" | grep -Eq '^[0-9]+$'; then
-                      echo "$val"
-                    else
-                      echo 0
-                    fi
-                  }
-
                   score() {
-                    sz_bytes=$1; layers=$2; hadocnt=$3; trivytotal=$4; trivyhigh=$5; trivycritical=$6
-                    python -c $'import os\nsz=float(os.environ.get("SZ",0))\nlayers=float(os.environ.get("LAYERS",0))\nhad=float(os.environ.get("HADO",0))\ntvt=float(os.environ.get("TRIVY_T",0))\ntvh=float(os.environ.get("TRIVY_H",0))\ntvc=float(os.environ.get("TRIVY_C",0))\nscore=max(0, 100 - (sz/1024/1024)*0.08 - layers*1.2 - had*0.4 - tvt*0.18 - tvh*0.7 - tvc*1.2)\nprint(round(score, 2))'
+                    python -c $'import sys\n'
+                                  $'sz=float(sys.argv[1]); layers=float(sys.argv[2]); had=float(sys.argv[3]); tvt=float(sys.argv[4]); tvh=float(sys.argv[5]); tvc=float(sys.argv[6])\n'
+                                  $'score=max(0, 100 - (sz/1024/1024)*0.08 - layers*1.2 - had*0.4 - tvt*0.18 - tvh*0.7 - tvc*1.2)\n'
+                                  $'print(round(score, 2))'
                   }
 
-                  human_score=$(SZ=$human_size LAYERS=$human_layers HADO=$(to_num $human_hadolint) TRIVY_T=$(to_num $human_trivy_total) TRIVY_H=$(to_num $human_trivy_high) TRIVY_C=$(to_num $human_trivy_critical) score)
-                  dockai_score=$(SZ=$dockai_size LAYERS=$dockai_layers HADO=$(to_num $dockai_hadolint) TRIVY_T=$(to_num $dockai_trivy_total) TRIVY_H=$(to_num $dockai_trivy_high) TRIVY_C=$(to_num $dockai_trivy_critical) score)
-                  cnb_score=$(SZ=$cnb_size LAYERS=$cnb_layers HADO=0 TRIVY_T=$(to_num $cnb_trivy_total) TRIVY_H=$(to_num $cnb_trivy_high) TRIVY_C=$(to_num $cnb_trivy_critical) score)
+                  human_score=$(score "$human_size" "$human_layers" "$human_hadolint" "$human_trivy_total" "$human_trivy_high" "$human_trivy_critical")
+                  dockai_score=$(score "$dockai_size" "$dockai_layers" "$dockai_hadolint" "$dockai_trivy_total" "$dockai_trivy_high" "$dockai_trivy_critical")
+                  cnb_score=$(score "$cnb_size" "$cnb_layers" 0 "$cnb_trivy_total" "$cnb_trivy_high" "$cnb_trivy_critical")
 
                   winner="DockAI"; best=$dockai_score
-                  if [ "$(printf '%.2f' $human_score)" != "0.00" ] && awk "BEGIN {exit !($human_score > $best)}"; then best=$human_score; winner="Human"; fi
+                  if awk "BEGIN {exit !($human_score > $best)}"; then best=$human_score; winner="Human"; fi
                   if awk "BEGIN {exit !($cnb_score > $best)}"; then best=$cnb_score; winner="CNB"; fi
 
                   bytes_to_mb() {
-                    python -c $'import sys\nval=sys.stdin.read().strip()\ntry:\n    print(round(int(val)/(1024*1024),2))\nexcept Exception:\n    print("N/A")'
+                    python -c $'import sys\nval=sys.argv[1]\ntry:\n    print(round(int(val)/(1024*1024), 2))\nexcept Exception:\n    print(0)'
                   }
 
-                  human_mb=$(echo "$human_size" | bytes_to_mb)
-                  dockai_mb=$(echo "$dockai_size" | bytes_to_mb)
-                  cnb_mb=$(echo "$cnb_size" | bytes_to_mb)
+                  human_mb=$(bytes_to_mb "$human_size")
+                  dockai_mb=$(bytes_to_mb "$dockai_size")
+                  cnb_mb=$(bytes_to_mb "$cnb_size")
 
-                  printf '%s\n' \
-                    '# Container Build Comparison' \
-                    '' \
-                    '## Inputs' \
-                    "- Target repository: ${{ steps.repo.outputs.repo_label }}" \
-                    "- Winner (highest score): ${winner}" \
-                    '' \
-                    '## Dockerfile origins' \
-                    "- Human Dockerfile: ${human_from}" \
-                    "- DockAI Dockerfile: ${dockai_from}" \
-                    '- CNB Buildpacks: paketobuildpacks/builder:base' \
-                    '' \
-                    '## Image Metrics' \
-                    '| Image | Size (MB) | Layers | Score (higher is better) |' \
-                    '| --- | --- | --- | --- |' \
-                    "| Human | ${human_mb} | ${human_layers} | ${human_score} |" \
-                    "| DockAI | ${dockai_mb} | ${dockai_layers} | ${dockai_score} |" \
-                    "| CNB | ${cnb_mb} | ${cnb_layers} | ${cnb_score} |" \
-                    '' \
-                    '## Lint & Vulnerability Summary' \
-                    '| Item | Hadolint Findings | Trivy Total | Critical | High | Medium | Low |' \
-                    '| --- | --- | --- | --- | --- | --- | --- |' \
-                    "| Human | ${human_hadolint} | ${human_trivy_total} | ${human_trivy_critical} | ${human_trivy_high} | ${human_trivy_medium} | ${human_trivy_low} |" \
-                    "| DockAI | ${dockai_hadolint} | ${dockai_trivy_total} | ${dockai_trivy_critical} | ${dockai_trivy_high} | ${dockai_trivy_medium} | ${dockai_trivy_low} |" \
-                    "| CNB | N/A | ${cnb_trivy_total} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low} |" \
-                    '' \
-                    '## Notes' \
-                    '- Score: 100 - 0.08*sizeMB - 1.2*layers - 0.4*hadolint - 0.18*trivy_total - 0.7*trivy_high - 1.2*trivy_critical (floored at 0).' \
-                    '- Higher score rewards smaller images, fewer layers, and fewer lint/vuln findings with heavier weight on critical issues.' \
-                    '- Base images extracted from the first FROM line.' \
-                    > "$report"
+                  cat > "$report" <<'EOF'
+                  # Container Build Comparison
+
+                  ## Inputs
+                  - Target repository: ${{ steps.repo.outputs.repo_label }}
+                  - Branch: ${{ steps.repo.outputs.branch }}
+                  - Winner (highest score): ${winner}
+
+                  ## Dockerfile origins
+                  - Human Dockerfile: ${human_from}
+                  - DockAI Dockerfile: ${dockai_from}
+                  - CNB Buildpacks: paketobuildpacks/builder:base
+
+                  ## Image Metrics
+                  | Image | Size (MB) | Layers | Score (higher is better) |
+                  | --- | --- | --- | --- |
+                  | Human | ${human_mb} | ${human_layers} | ${human_score} |
+                  | DockAI | ${dockai_mb} | ${dockai_layers} | ${dockai_score} |
+                  | CNB | ${cnb_mb} | ${cnb_layers} | ${cnb_score} |
+
+                  ## Lint & Vulnerability Summary
+                  | Item | Hadolint Findings | Trivy Total | Critical | High | Medium | Low |
+                  | --- | --- | --- | --- | --- | --- | --- |
+                  | Human | ${human_hadolint} | ${human_trivy_total} | ${human_trivy_critical} | ${human_trivy_high} | ${human_trivy_medium} | ${human_trivy_low} |
+                  | DockAI | ${dockai_hadolint} | ${dockai_trivy_total} | ${dockai_trivy_critical} | ${dockai_trivy_high} | ${dockai_trivy_medium} | ${dockai_trivy_low} |
+                  | CNB | 0 | ${cnb_trivy_total} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low} |
+
+                  ## Scoring rule
+                  score = 100 - 0.08*sizeMB - 1.2*layers - 0.4*hadolint - 0.18*trivy_total - 0.7*trivy_high - 1.2*trivy_critical (floored at 0)
+                  EOF
+
+                  echo "report_path=$report" >> "$GITHUB_OUTPUT"
 
                   {
                     echo "## Winner: ${winner}"
@@ -370,13 +318,10 @@ jobs:
                     echo "Detailed report: ${report}"
                   } >> "$GITHUB_STEP_SUMMARY"
 
-                  echo "report_path=$report" >> "$GITHUB_OUTPUT"
-
             - name: Upload artifacts
               uses: actions/upload-artifact@v4
               with:
-                  name: comparison-report
-                  if-no-files-found: warn
+                  name: compare-builds
                   path: |
                       report.md
                       ${{ env.TARGET_DIR }}/Dockerfile
