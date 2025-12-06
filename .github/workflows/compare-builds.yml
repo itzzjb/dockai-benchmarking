@@ -2,138 +2,137 @@ name: Compare DockAI vs Human vs CNB
 
 on:
     workflow_dispatch:
+        inputs:
+            repo_url:
+                description: "Target repository (owner/repo or full https URL)"
+                required: false
+                default: ""
+            branch:
+                description: "Branch or ref to check out"
+                required: false
+                default: "main"
 
 jobs:
     compare:
+        name: Build and Benchmark Images
         runs-on: ubuntu-latest
-
         env:
             TARGET_DIR: target-repo
-            HUMAN_IMG: human-image:latest
-            DOCKAI_IMG: dockai-image:latest
-            CNB_IMG: cnb-image:latest
-
+            REPORT_PATH: report.md
+            HUMAN_IMG: human-candidate:latest
+            DOCKAI_IMG: dockai-candidate:latest
+            CNB_IMG: cnb-candidate:latest
+            PACK_VERSION: v0.34.2
         steps:
-            - name: Checkout orchestrator repo
+            - name: Checkout workflow repo
               uses: actions/checkout@v4
 
-            - name: Read config.json for target repo
-              id: cfg
-              run: |
-                  REPO_URL=$(jq -r '.repository_url' config.json)
-                  REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
-                  echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
-                  echo "REPO_PATH=$REPO_PATH" >> $GITHUB_ENV
-                  echo "Target: $REPO_PATH"
-
-            - name: Checkout target repository
-              uses: actions/checkout@v4
-              with:
-                  repository: ${{ steps.cfg.outputs.repo_path }}
-                  path: ${{ env.TARGET_DIR }}
-
-            - name: Preserve human Dockerfile if present
-              run: |
-                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-                    cp "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.human"
-                  fi
-
-            - name: Check human Dockerfile presence
-              id: human_exists
-              run: |
-                  if [ -f "${TARGET_DIR}/Dockerfile.human" ]; then
-                    echo "present=true" >> $GITHUB_OUTPUT
-                  else
-                    echo "present=false" >> $GITHUB_OUTPUT
-                  fi
-
-            - name: Generate DockAI Dockerfile
-              uses: itzzjb/dockai@v3
-              with:
-                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-                  project_path: ${{ env.TARGET_DIR }}
-                  max_retries: 5
-                  model_analyzer: gpt-4o-mini
-                  model_blueprint: gpt-4o-mini
-                  model_generator: gpt-4o-mini
-                  model_generator_iterative: gpt-4o-mini
-                  model_reviewer: gpt-4o-mini
-                  model_reflector: gpt-4o-mini
-                  model_error_analyzer: gpt-4o-mini
-                  model_iterative_improver: gpt-4o-mini
-
-            - name: Keep DockAI Dockerfile alongside human
-              run: |
-                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-                    mv "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.dockai"
-                  fi
-                  if [ -f "${TARGET_DIR}/Dockerfile.human" ]; then
-                    mv "${TARGET_DIR}/Dockerfile.human" "${TARGET_DIR}/Dockerfile"
-                  fi
-
-            - name: Hadolint human Dockerfile
-              if: ${{ steps.human_exists.outputs.present == 'true' }}
-              run: |
-                  docker run --rm -i hadolint/hadolint hadolint -f json - < "${TARGET_DIR}/Dockerfile" > hadolint-human.json
-
-            - name: Hadolint DockAI Dockerfile
-              run: |
-                  docker run --rm -i hadolint/hadolint hadolint -f json - < "${TARGET_DIR}/Dockerfile.dockai" > hadolint-dockai.json
-
-            - name: Build human image (if Dockerfile exists)
-              run: |
-                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-                    docker build -t ${HUMAN_IMG} ${TARGET_DIR}
-                  else
-                    echo "No human Dockerfile; skipping human build"
-                  fi
-
-            - name: Build DockAI image
-              run: |
-                  if [ -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
-                    docker build -f ${TARGET_DIR}/Dockerfile.dockai -t ${DOCKAI_IMG} ${TARGET_DIR}
-                  else
-                    echo "Missing DockAI Dockerfile" && exit 1
-                  fi
-
-            - name: Install pack CLI
+            - name: Resolve target repo
+              id: repo
               run: |
                   set -euo pipefail
-                  PACK_VERSION=0.33.2
-                  url="https://github.com/buildpacks/pack/releases/download/v${PACK_VERSION}/pack-v${PACK_VERSION}-linux.tgz"
-                  curl -sSL "$url" | sudo tar -C /usr/local/bin -xz pack
-                  sudo chmod +x /usr/local/bin/pack
-                  /usr/local/bin/pack --version
+                  input_repo="${{ github.event.inputs.repo_url }}"
+                  config_repo=$(jq -r '.repository_url // empty' config.json)
 
-            - name: Install Trivy
+                  repo="${input_repo:-$config_repo}"
+                  if [ -z "$repo" ] || [ "$repo" = "null" ]; then
+                    echo "Repository not provided via input or config.json" >&2
+                    exit 1
+                  fi
+
+                  # Normalize to https URL for cloning
+                  case "$repo" in
+                    http*) clone_url="$repo" ;;
+                    git@*) clone_url="$repo" ;;
+                    *) clone_url="https://github.com/${repo}" ;;
+                  esac
+
+                  echo "clone_url=$clone_url" >> "$GITHUB_OUTPUT"
+                  echo "repo_label=$repo" >> "$GITHUB_OUTPUT"
+
+            - name: Checkout target repo
               run: |
                   set -euo pipefail
-                  sudo apt-get update -qq
-                  sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-                  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-                  echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
-                  sudo apt-get update -qq
-                  sudo apt-get install -y trivy
+                  rm -rf "${TARGET_DIR}"
+                  git clone --depth=1 --branch "${{ github.event.inputs.branch }}" "${{ steps.repo.outputs.clone_url }}" "${TARGET_DIR}"
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Install toolchain (hadolint, trivy, pack)
+              run: |
+                  set -euo pipefail
+                  sudo apt-get update
+                  sudo apt-get install -y jq curl ca-certificates
+
+                  # hadolint
+                  curl -sSL https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 -o hadolint
+                  sudo install -m 0755 hadolint /usr/local/bin/hadolint
+
+                  # trivy
+                  curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
+                  # pack
+                  curl -sSL "https://github.com/buildpacks/pack/releases/download/${PACK_VERSION}/pack-${PACK_VERSION}-linux.tgz" | sudo tar -xz -C /usr/local/bin pack
+
+            - name: Detect Dockerfiles
+              id: detect
+              run: |
+                  set -euo pipefail
+                  human_present=false
+                  dockai_present=false
+
+                  [ -f "${TARGET_DIR}/Dockerfile" ] && human_present=true
+                  [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && dockai_present=true
+
+                  echo "human_present=$human_present" >> "$GITHUB_OUTPUT"
+                  echo "dockai_present=$dockai_present" >> "$GITHUB_OUTPUT"
+
+            - name: Build human Dockerfile
+              if: steps.detect.outputs.human_present == 'true'
+              run: |
+                  set -euo pipefail
+                  docker build --file "${TARGET_DIR}/Dockerfile" --tag ${HUMAN_IMG} "${TARGET_DIR}"
+
+            - name: Build DockAI Dockerfile
+              if: steps.detect.outputs.dockai_present == 'true'
+              run: |
+                  set -euo pipefail
+                  docker build --file "${TARGET_DIR}/Dockerfile.dockai" --tag ${DOCKAI_IMG} "${TARGET_DIR}"
 
             - name: Build CNB image
               run: |
+                  set -euo pipefail
                   pack build ${CNB_IMG} \
-                    --path ${TARGET_DIR} \
                     --builder paketobuildpacks/builder:base \
+                    --path "${TARGET_DIR}" \
                     --pull-policy if-not-present
 
-            - name: Run Trivy scan on human image
-              if: ${{ steps.human_exists.outputs.present == 'true' }}
+            - name: Lint human Dockerfile
+              if: steps.detect.outputs.human_present == 'true'
+              run: |
+                  set -euo pipefail
+                  hadolint "${TARGET_DIR}/Dockerfile" -f json > hadolint-human.json || true
+
+            - name: Lint DockAI Dockerfile
+              if: steps.detect.outputs.dockai_present == 'true'
+              run: |
+                  set -euo pipefail
+                  hadolint "${TARGET_DIR}/Dockerfile.dockai" -f json > hadolint-dockai.json || true
+
+            - name: Trivy scan human image
+              if: steps.detect.outputs.human_present == 'true'
               run: |
                   set -euo pipefail
                   trivy image --quiet --format json -o trivy-human.json ${HUMAN_IMG}
 
-            - name: Run Trivy scan on DockAI image
+            - name: Trivy scan DockAI image
+              if: steps.detect.outputs.dockai_present == 'true'
               run: |
                   set -euo pipefail
                   trivy image --quiet --format json -o trivy-dockai.json ${DOCKAI_IMG}
 
-            - name: Run Trivy scan on CNB image
+            - name: Trivy scan CNB image
               run: |
                   set -euo pipefail
                   trivy image --quiet --format json -o trivy-cnb.json ${CNB_IMG}
@@ -141,8 +140,8 @@ jobs:
             - name: Collect metrics and compare
               id: metrics
               run: |
-                  set -e
-                  report=report.md
+                  set -euo pipefail
+                  report=${REPORT_PATH}
 
                   human_from="N/A"; dockai_from="N/A"
                   [ -f "${TARGET_DIR}/Dockerfile" ] && human_from=$(grep -m1 '^FROM ' "${TARGET_DIR}/Dockerfile" | awk '{print $2}')
@@ -172,16 +171,19 @@ jobs:
                     file=$1
                     if [ -f "$file" ]; then
                       total=$(jq '[.Results[].Vulnerabilities[]?] | length' "$file")
-                      high=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH" or .Severity=="CRITICAL")] | length' "$file")
-                      echo "$total $high"
+                      critical=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$file")
+                      high=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "$file")
+                      medium=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' "$file")
+                      low=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="LOW")] | length' "$file")
+                      echo "$total $critical $high $medium $low"
                     else
-                      echo "N/A N/A"
+                      echo "N/A N/A N/A N/A N/A"
                     fi
                   }
 
-                  read human_trivy_total human_trivy_high < <(trivy_totals trivy-human.json)
-                  read dockai_trivy_total dockai_trivy_high < <(trivy_totals trivy-dockai.json)
-                  read cnb_trivy_total cnb_trivy_high < <(trivy_totals trivy-cnb.json)
+                  read human_trivy_total human_trivy_critical human_trivy_high human_trivy_medium human_trivy_low < <(trivy_totals trivy-human.json)
+                  read dockai_trivy_total dockai_trivy_critical dockai_trivy_high dockai_trivy_medium dockai_trivy_low < <(trivy_totals trivy-dockai.json)
+                  read cnb_trivy_total cnb_trivy_critical cnb_trivy_high cnb_trivy_medium cnb_trivy_low < <(trivy_totals trivy-cnb.json)
 
                   to_num() {
                     val=$1
@@ -193,19 +195,32 @@ jobs:
                   }
 
                   score() {
-                    sz_bytes=$1; layers=$2; hadocnt=$3; trivytotal=$4; trivyhigh=$5
-                    python -c "import os; sz=float(os.environ.get('SZ',0)); layers=float(os.environ.get('LAYERS',0)); had=float(os.environ.get('HADO',0)); tvt=float(os.environ.get('TRIVY_T',0)); tvh=float(os.environ.get('TRIVY_H',0)); score=max(0, 100 - (sz/1024/1024)*0.1 - layers*1.5 - had*0.5 - tvt*0.25 - tvh*1.0); print(score)" "$@"
+                    sz_bytes=$1; layers=$2; hadocnt=$3; trivytotal=$4; trivyhigh=$5; trivycritical=$6
+                    python -c $'import os\nsz=float(os.environ.get("SZ",0))\nlayers=float(os.environ.get("LAYERS",0))\nhad=float(os.environ.get("HADO",0))\ntvt=float(os.environ.get("TRIVY_T",0))\ntvh=float(os.environ.get("TRIVY_H",0))\ntvc=float(os.environ.get("TRIVY_C",0))\nscore=max(0, 100 - (sz/1024/1024)*0.08 - layers*1.2 - had*0.4 - tvt*0.18 - tvh*0.7 - tvc*1.2)\nprint(round(score, 2))'
                   }
 
-                  human_score=$(SZ=$human_size LAYERS=$human_layers HADO=$(to_num $human_hadolint) TRIVY_T=$(to_num $human_trivy_total) TRIVY_H=$(to_num $human_trivy_high) score)
-                  dockai_score=$(SZ=$dockai_size LAYERS=$dockai_layers HADO=$(to_num $dockai_hadolint) TRIVY_T=$(to_num $dockai_trivy_total) TRIVY_H=$(to_num $dockai_trivy_high) score)
-                  cnb_score=$(SZ=$cnb_size LAYERS=$cnb_layers HADO=0 TRIVY_T=$(to_num $cnb_trivy_total) TRIVY_H=$(to_num $cnb_trivy_high) score)
+                  human_score=$(SZ=$human_size LAYERS=$human_layers HADO=$(to_num $human_hadolint) TRIVY_T=$(to_num $human_trivy_total) TRIVY_H=$(to_num $human_trivy_high) TRIVY_C=$(to_num $human_trivy_critical) score)
+                  dockai_score=$(SZ=$dockai_size LAYERS=$dockai_layers HADO=$(to_num $dockai_hadolint) TRIVY_T=$(to_num $dockai_trivy_total) TRIVY_H=$(to_num $dockai_trivy_high) TRIVY_C=$(to_num $dockai_trivy_critical) score)
+                  cnb_score=$(SZ=$cnb_size LAYERS=$cnb_layers HADO=0 TRIVY_T=$(to_num $cnb_trivy_total) TRIVY_H=$(to_num $cnb_trivy_high) TRIVY_C=$(to_num $cnb_trivy_critical) score)
+
+                  winner="DockAI"; best=$dockai_score
+                  if [ "$(printf '%.2f' $human_score)" != "0.00" ] && awk "BEGIN {exit !($human_score > $best)}"; then best=$human_score; winner="Human"; fi
+                  if awk "BEGIN {exit !($cnb_score > $best)}"; then best=$cnb_score; winner="CNB"; fi
+
+                  bytes_to_mb() {
+                    python -c $'import sys\nval=sys.stdin.read().strip()\ntry:\n    print(round(int(val)/(1024*1024),2))\nexcept Exception:\n    print("N/A")'
+                  }
+
+                  human_mb=$(echo "$human_size" | bytes_to_mb)
+                  dockai_mb=$(echo "$dockai_size" | bytes_to_mb)
+                  cnb_mb=$(echo "$cnb_size" | bytes_to_mb)
 
                   printf '%s\n' \
                     '# Container Build Comparison' \
                     '' \
                     '## Inputs' \
-                    "- Target repository: ${REPO_PATH}" \
+                    "- Target repository: ${{ steps.repo.outputs.repo_label }}" \
+                    "- Winner (highest score): ${winner}" \
                     '' \
                     '## Dockerfile origins' \
                     "- Human Dockerfile: ${human_from}" \
@@ -213,26 +228,37 @@ jobs:
                     '- CNB Buildpacks: paketobuildpacks/builder:base' \
                     '' \
                     '## Image Metrics' \
-                    '| Image | Size (bytes) | Layers | Score (lower size & layers = higher) |' \
+                    '| Image | Size (MB) | Layers | Score (higher is better) |' \
                     '| --- | --- | --- | --- |' \
-                    "| Human | ${human_size} | ${human_layers} | ${human_score} |" \
-                    "| DockAI | ${dockai_size} | ${dockai_layers} | ${dockai_score} |" \
-                    "| CNB | ${cnb_size} | ${cnb_layers} | ${cnb_score} |" \
+                    "| Human | ${human_mb} | ${human_layers} | ${human_score} |" \
+                    "| DockAI | ${dockai_mb} | ${dockai_layers} | ${dockai_score} |" \
+                    "| CNB | ${cnb_mb} | ${cnb_layers} | ${cnb_score} |" \
                     '' \
                     '## Lint & Vulnerability Summary' \
-                    '| Item | Hadolint Findings | Trivy Vulns (total) | Trivy High/Critical |' \
-                    '| --- | --- | --- | --- |' \
-                    "| Human | ${human_hadolint} | ${human_trivy_total} | ${human_trivy_high} |" \
-                    "| DockAI | ${dockai_hadolint} | ${dockai_trivy_total} | ${dockai_trivy_high} |" \
-                    "| CNB | N/A | ${cnb_trivy_total} | ${cnb_trivy_high} |" \
+                    '| Item | Hadolint Findings | Trivy Total | Critical | High | Medium | Low |' \
+                    '| --- | --- | --- | --- | --- | --- | --- |' \
+                    "| Human | ${human_hadolint} | ${human_trivy_total} | ${human_trivy_critical} | ${human_trivy_high} | ${human_trivy_medium} | ${human_trivy_low} |" \
+                    "| DockAI | ${dockai_hadolint} | ${dockai_trivy_total} | ${dockai_trivy_critical} | ${dockai_trivy_high} | ${dockai_trivy_medium} | ${dockai_trivy_low} |" \
+                    "| CNB | N/A | ${cnb_trivy_total} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low} |" \
                     '' \
                     '## Notes' \
-                    '- Scores: 100 - 0.1*sizeMB - 1.5*layers - 0.5*hadolint_count - 0.25*trivy_total - 1.0*trivy_high (floored at 0).' \
-                    '- Higher score rewards smaller images, fewer layers, and fewer lint/vuln findings.' \
-                    '- Base images extracted from first FROM line.' \
+                    '- Score: 100 - 0.08*sizeMB - 1.2*layers - 0.4*hadolint - 0.18*trivy_total - 0.7*trivy_high - 1.2*trivy_critical (floored at 0).' \
+                    '- Higher score rewards smaller images, fewer layers, and fewer lint/vuln findings with heavier weight on critical issues.' \
+                    '- Base images extracted from the first FROM line.' \
                     > "$report"
 
-                  echo "report_path=$report" >> $GITHUB_OUTPUT
+                  {
+                    echo "## Winner: ${winner}"
+                    echo "| Image | Score | Size (MB) | Critical | High | Medium | Low |"
+                    echo "| --- | --- | --- | --- | --- | --- | --- |"
+                    echo "| Human | ${human_score} | ${human_mb} | ${human_trivy_critical} | ${human_trivy_high} | ${human_trivy_medium} | ${human_trivy_low} |"
+                    echo "| DockAI | ${dockai_score} | ${dockai_mb} | ${dockai_trivy_critical} | ${dockai_trivy_high} | ${dockai_trivy_medium} | ${dockai_trivy_low} |"
+                    echo "| CNB | ${cnb_score} | ${cnb_mb} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low} |"
+                    echo ""
+                    echo "Detailed report: ${report}"
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+                  echo "report_path=$report" >> "$GITHUB_OUTPUT"
 
             - name: Upload artifacts
               uses: actions/upload-artifact@v4
