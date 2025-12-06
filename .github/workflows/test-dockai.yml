@@ -34,20 +34,21 @@ jobs:
               run: |
                   cat > target-repo/.dockai << 'EOF'
                   [instructions_generator]
-                  This Flask application uses Pipenv for dependency management.
-                  CRITICAL: Install the following system packages in the BUILDER stage before running pipenv install:
-                  - gcc
-                  - python3-dev
-                  - libffi-dev
-                  - libssl-dev
-                  - build-essential
-
-                  In the RUNTIME stage:
-                  - Copy the installed Python packages from the builder stage
-                  - Install runtime system dependencies: libffi-dev libssl-dev
-                  - Use pip to install from requirements.txt (generated from Pipfile.lock)
-                  - Run as non-root user
-                  - Use gunicorn as specified in Procfile
+                  CRITICAL REQUIREMENTS:
+                  1. Use python:3.7-slim as base image (Pipfile.lock requires Python 3.7)
+                  2. Install system build packages BEFORE running pip or pipenv:
+                     - build-essential
+                     - gcc
+                     - python3-dev
+                     - libffi-dev
+                     - libssl-dev
+                     - libpq-dev
+                  3. Use multi-stage build: builder stage for compilation, runtime for just the app
+                  4. In runtime stage, install only runtime libraries (libpq5, libssl, libffi)
+                  5. Use pip to install from requirements.txt
+                  6. Run container as non-root user
+                  7. Use gunicorn as WSGI server from Procfile
+                  8. Bind to 0.0.0.0:$PORT for proper port handling
                   EOF
 
             - name: Run DockAI to generate Dockerfile
@@ -56,15 +57,6 @@ jobs:
                   openai_api_key: ${{ secrets.OPENAI_API_KEY }}
                   project_path: target-repo
                   max_retries: 7
-                  model_analyzer: gpt-5-mini
-                  model_blueprint: gpt-5-mini
-                  model_generator: gpt-5-mini
-                  model_generator_iterative: gpt-5-mini
-                  model_reviewer: gpt-5-mini
-                  model_reflector: gpt-5-mini
-                  model_error_analyzer: gpt-5-mini
-                  model_iterative_improver: gpt-5-mini
-
             - name: Check if Dockerfile was generated
               run: |
                   if [ -f target-repo/Dockerfile ]; then
