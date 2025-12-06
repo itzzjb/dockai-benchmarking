@@ -224,7 +224,7 @@ jobs:
             - name: Lint Human Dockerfile (hadolint)
               uses: hadolint/hadolint-action@v3.1.0
               with:
-                  dockerfile: ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile
+                  dockerfile: ${{ env.TARGET_DIR }}/Dockerfile
                   format: json
                   output-file: hadolint-human.json
               continue-on-error: true
@@ -233,7 +233,7 @@ jobs:
             - name: Lint DockAI Dockerfile (hadolint)
               uses: hadolint/hadolint-action@v3.1.0
               with:
-                  dockerfile: ${{ github.workspace }}/${{ env.TARGET_DIR }}/Dockerfile.dockai
+                  dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.dockai
                   format: json
                   output-file: hadolint-dockai.json
               continue-on-error: true
