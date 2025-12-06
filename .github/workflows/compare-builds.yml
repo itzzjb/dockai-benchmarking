@@ -217,14 +217,26 @@ jobs:
                     --pull-policy if-not-present
 
             - name: Lint Dockerfiles (hadolint via container)
+              env:
+                  HADOLINT_IMAGE: hadolint/hadolint:latest
               run: |
                   set -euo pipefail
-                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-                    docker run --rm -i hadolint/hadolint hadolint --format json - < "${TARGET_DIR}/Dockerfile" > hadolint-human.json || true
-                  fi
-                  if [ -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
-                    docker run --rm -i hadolint/hadolint hadolint --format json - < "${TARGET_DIR}/Dockerfile.dockai" > hadolint-dockai.json || true
-                  fi
+                  dl_image() {
+                    docker pull "$HADOLINT_IMAGE" >/dev/null
+                  }
+                  dl_image
+
+                  run_hadolint() {
+                    local file=$1 out=$2
+                    if [ -f "$file" ]; then
+                      docker run --rm -i "$HADOLINT_IMAGE" hadolint --format json - < "$file" > "$out" || true
+                    else
+                      echo "[]" > "$out"
+                    fi
+                  }
+
+                  run_hadolint "${TARGET_DIR}/Dockerfile" hadolint-human.json
+                  run_hadolint "${TARGET_DIR}/Dockerfile.dockai" hadolint-dockai.json
 
             - name: Trivy scans
               run: |
@@ -363,7 +375,8 @@ jobs:
                   render_hadolint() {
                     local file=$1 label=$2
                     echo "### Hadolint - ${label}" >> "$report"
-                    if [ -f "$file" ] && [ "$(jq 'length' "$file")" -gt 0 ]; then
+                    local count; count=$(jq 'length' "$file" 2>/dev/null || echo 0)
+                    if [ "$count" -gt 0 ]; then
                       jq -r '"| Line | Code | Level | Message |", "| --- | --- | --- | --- |", (.[] | "| \(.line // "-") | \(.code // "-") | \(.level // "-") | \(.message // "-" | gsub("\\|"; "/")) |")' "$file" >> "$report"
                     else
                       echo "No findings." >> "$report"
@@ -374,7 +387,15 @@ jobs:
                   render_trivy() {
                     local file=$1 label=$2
                     echo "### Trivy - ${label}" >> "$report"
-                    if [ -f "$file" ] && [ "$(jq '[.Results[].Vulnerabilities[]?] | length' "$file")" -gt 0 ]; then
+                    local total; total=$(jq '[.Results[].Vulnerabilities[]?] | length' "$file" 2>/dev/null || echo 0)
+                    if [ "$total" -gt 0 ]; then
+                      # Severity grouping
+                      for sev in CRITICAL HIGH MEDIUM LOW UNKNOWN; do
+                        local count; count=$(jq "[.Results[].Vulnerabilities[]? | select(.Severity==\"${sev}\")] | length" "$file" 2>/dev/null || echo 0)
+                        echo "- ${sev}: ${count}" >> "$report"
+                      done
+                      echo "" >> "$report"
+                      # Detailed table
                       jq -r '"| ID | Severity | Package | Version | Fixed | Title |", "| --- | --- | --- | --- | --- | --- |", (.Results[]?.Vulnerabilities[]? | "| \(.VulnerabilityID) | \(.Severity) | \(.PkgName) | \(.InstalledVersion // "-") | \(.FixedVersion // "-") | \(.Title // "-" | gsub("\\|"; "/")) |")' "$file" >> "$report"
                     else
                       echo "No vulnerabilities found." >> "$report"
