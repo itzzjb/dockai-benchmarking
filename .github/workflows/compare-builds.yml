@@ -227,16 +227,31 @@ jobs:
                   dl_image
 
                   run_hadolint() {
-                    local file=$1 out=$2
-                    if [ -f "$file" ]; then
-                      docker run --rm -i "$HADOLINT_IMAGE" hadolint --format json - < "$file" > "$out" || true
-                    else
+                    local file=$1 out=$2 label=$3
+                    if [ ! -f "$file" ]; then
                       echo "[]" > "$out"
+                      echo "hadolint skipped (missing): $label" >&2
+                      return
+                    fi
+
+                    # hadolint exits 1 when findings exist; still acceptable. Treat >=2 as failure.
+                    if docker run --rm -i "$HADOLINT_IMAGE" hadolint --format json - < "$file" > "$out"; then
+                      status=0
+                    else
+                      status=$?
+                    fi
+
+                    count=$(jq 'length' "$out" 2>/dev/null || echo 0)
+                    echo "hadolint $label exit=$status findings=$count"
+
+                    if [ "$status" -ge 2 ]; then
+                      echo "hadolint failed (status $status) for $label" >&2
+                      exit $status
                     fi
                   }
 
-                  run_hadolint "${TARGET_DIR}/Dockerfile" hadolint-human.json
-                  run_hadolint "${TARGET_DIR}/Dockerfile.dockai" hadolint-dockai.json
+                  run_hadolint "${TARGET_DIR}/Dockerfile" hadolint-human.json "Human"
+                  run_hadolint "${TARGET_DIR}/Dockerfile.dockai" hadolint-dockai.json "DockAI"
 
             - name: Trivy scans
               run: |
