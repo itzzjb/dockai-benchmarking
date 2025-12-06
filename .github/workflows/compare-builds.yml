@@ -79,7 +79,11 @@ jobs:
                   fi
 
             - name: Install pack CLI
-              uses: buildpacks/pack-action@v5
+              run: |
+                  set -e
+                  PACK_VERSION=v0.33.2
+                  curl -sSL "https://github.com/buildpacks/pack/releases/download/${PACK_VERSION}/pack-${PACK_VERSION}-linux.tgz" \
+                    | sudo tar -xz -C /usr/local/bin --strip-components=1
 
             - name: Build CNB image
               run: |
@@ -123,30 +127,29 @@ jobs:
                   dockai_score=$(score $dockai_size $dockai_layers)
                   cnb_score=$(score $cnb_size $cnb_layers)
 
-                  cat > "$report" <<'EOF'
-                  # Container Build Comparison
-
-                  ## Inputs
-                  - Target repository: ${REPO_PATH}
-
-                  ## Dockerfile origins
-                  - Human Dockerfile: ${human_from}
-                  - DockAI Dockerfile: ${dockai_from}
-                  - CNB Buildpacks: paketobuildpacks/builder:base
-
-                  ## Image Metrics
-                  | Image | Size (bytes) | Layers | Score (lower size & layers = higher) |
-                  | --- | --- | --- | --- |
-                  | Human | ${human_size} | ${human_layers} | ${human_score} |
-                  | DockAI | ${dockai_size} | ${dockai_layers} | ${dockai_score} |
-                  | CNB | ${cnb_size} | ${cnb_layers} | ${cnb_score} |
-
-                  ## Notes
-                  - Scores are: 100 - 0.1*sizeMB - 1.5*layers (floored at 0).
-                  - Higher score indicates smaller image and fewer layers.
-                  - Base images extracted from first FROM line.
-                  EOF
-
+                  printf '%s\n' \
+                    '# Container Build Comparison' \
+                    '' \
+                    '## Inputs' \
+                    "- Target repository: ${REPO_PATH}" \
+                    '' \
+                    '## Dockerfile origins' \
+                    "- Human Dockerfile: ${human_from}" \
+                    "- DockAI Dockerfile: ${dockai_from}" \
+                    '- CNB Buildpacks: paketobuildpacks/builder:base' \
+                    '' \
+                    '## Image Metrics' \
+                    '| Image | Size (bytes) | Layers | Score (lower size & layers = higher) |' \
+                    '| --- | --- | --- | --- |' \
+                    "| Human | ${human_size} | ${human_layers} | ${human_score} |" \
+                    "| DockAI | ${dockai_size} | ${dockai_layers} | ${dockai_score} |" \
+                    "| CNB | ${cnb_size} | ${cnb_layers} | ${cnb_score} |" \
+                    '' \
+                    '## Notes' \
+                    '- Scores are: 100 - 0.1*sizeMB - 1.5*layers (floored at 0).' \
+                    '- Higher score indicates smaller image and fewer layers.' \
+                    '- Base images extracted from first FROM line.' \
+                    > "$report"
                   echo "report_path=$report" >> $GITHUB_OUTPUT
 
             - name: Upload artifacts

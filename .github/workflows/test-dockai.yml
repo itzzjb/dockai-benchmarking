@@ -1,56 +1,52 @@
 name: Test DockAI Action
 
 on:
-    push:
-        branches: [main]
-    pull_request:
-        branches: [main]
-    workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-    test-dockai:
-        runs-on: ubuntu-latest
+  test-dockai:
+    runs-on: ubuntu-latest
 
-        steps:
-            - name: Checkout test repository
-              uses: actions/checkout@v4
+    steps:
+      - name: Checkout test repository
+        uses: actions/checkout@v4
 
-            - name: Read config.json
-              id: read-config
-              run: |
-                  REPO_URL=$(jq -r '.repository_url' config.json)
-                  # Extract owner/repo from full URL if needed
-                  REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
-                  echo "repo_url=$REPO_PATH" >> $GITHUB_OUTPUT
-                  echo "Target repository: $REPO_PATH"
+      - name: Read config.json
+        id: read-config
+        run: |
+          REPO_URL=$(jq -r '.repository_url' config.json)
+          # Extract owner/repo from full URL if needed
+          REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
+          echo "repo_url=$REPO_PATH" >> $GITHUB_OUTPUT
+          echo "Target repository: $REPO_PATH"
 
-            - name: Checkout target repository
-              uses: actions/checkout@v4
-              with:
-                  repository: ${{ steps.read-config.outputs.repo_url }}
-                  path: target-repo
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.read-config.outputs.repo_url }}
+          path: target-repo
 
-            - name: Run DockAI to generate Dockerfile
-              uses: itzzjb/dockai@v3
-              with:
-                  openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-                  project_path: target-repo
-                  max_retries: 7
-            - name: Check if Dockerfile was generated
-              run: |
-                  if [ -f target-repo/Dockerfile ]; then
-                    echo "✅ Dockerfile successfully generated!"
-                    echo "Contents:"
-                    cat target-repo/Dockerfile
-                  else
-                    echo "❌ Dockerfile was not generated"
-                    exit 1
-                  fi
+      - name: Run DockAI to generate Dockerfile
+        uses: itzzjb/dockai@v3
+        with:
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          project_path: target-repo
+          max_retries: 7
+      - name: Check if Dockerfile was generated
+        run: |
+          if [ -f target-repo/Dockerfile ]; then
+            echo "✅ Dockerfile successfully generated!"
+            echo "Contents:"
+            cat target-repo/Dockerfile
+          else
+            echo "❌ Dockerfile was not generated"
+            exit 1
+          fi
 
-            - name: Upload generated Dockerfile
-              uses: actions/upload-artifact@v4
-              if: always()
-              with:
-                  name: generated-dockerfile
-                  path: target-repo/Dockerfile
-                  retention-days: 30
+      - name: Upload generated Dockerfile
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: generated-dockerfile
+          path: target-repo/Dockerfile
+          retention-days: 30
