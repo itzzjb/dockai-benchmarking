@@ -150,6 +150,24 @@ jobs:
                   project_path: ${{ env.TARGET_DIR }}
                   max_retries: 7
 
+            - name: Preserve human Dockerfile and keep DockAI output separate
+              run: |
+                  set -euo pipefail
+                  human_backup="${TARGET_DIR}/Dockerfile.human.bak"
+                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+                    cp "${TARGET_DIR}/Dockerfile" "$human_backup"
+                  fi
+
+                  # If DockAI produced a Dockerfile, move it to Dockerfile.dockai
+                  if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+                    mv "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.dockai"
+                  fi
+
+                  # Restore original human Dockerfile if it existed
+                  if [ -f "$human_backup" ]; then
+                    mv "$human_backup" "${TARGET_DIR}/Dockerfile"
+                  fi
+
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@v3
 
@@ -212,6 +230,9 @@ jobs:
 
             - name: Calculate scores and report
               id: report
+              env:
+                  DOCKAI_PRESENT: ${{ steps.detect.outputs.dockai_present }}
+                  HUMAN_PRESENT: ${{ steps.detect.outputs.human_present }}
               run: |
                   set -euo pipefail
                   report="${REPORT_PATH}"
@@ -269,6 +290,16 @@ jobs:
                   human_score=$(score "$human_size" "$human_layers" "$human_hadolint" "$human_trivy_total" "$human_trivy_high" "$human_trivy_critical")
                   dockai_score=$(score "$dockai_size" "$dockai_layers" "$dockai_hadolint" "$dockai_trivy_total" "$dockai_trivy_high" "$dockai_trivy_critical")
                   cnb_score=$(score "$cnb_size" "$cnb_layers" 0 "$cnb_trivy_total" "$cnb_trivy_high" "$cnb_trivy_critical")
+
+                  # If DockAI image was not built, zero out its score and mark fields as N/A
+                  if [ "${DOCKAI_PRESENT}" != "true" ] || ! docker image inspect "${DOCKAI_IMG}" >/dev/null 2>&1; then
+                    dockai_score=0
+                    dockai_size=0
+                    dockai_layers=0
+                    dockai_hadolint=0
+                    dockai_trivy_total=0; dockai_trivy_critical=0; dockai_trivy_high=0; dockai_trivy_medium=0; dockai_trivy_low=0
+                    dockai_from="N/A"
+                  fi
 
                   winner="DockAI"; best=$dockai_score
                   if awk "BEGIN {exit !($human_score > $best)}"; then best=$human_score; winner="Human"; fi
