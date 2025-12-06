@@ -55,21 +55,37 @@ jobs:
           set -euo pipefail
           input_repo="${{ github.event.inputs.repo_url }}"
           input_branch="${{ github.event.inputs.branch }}"
-          config_repo=$(jq -r '.repository_url // empty' config.json)
-          repo_url="${input_repo:-$config_repo}"
 
-          if [ -z "$repo_url" ]; then echo "Repo URL required" >&2; exit 1; fi
+          # Fallback to config.json if input is empty
+          # (Ensure config.json exists or ignore errors if it doesn't)
+          if [ -f config.json ]; then
+            config_repo=$(jq -r '.repository_url // empty' config.json)
+          else
+            config_repo=""
+          fi
 
-          # Simple clone URL construction for brevity in research context
-          clone_url="https://github.com/${repo_url}"
+          raw_repo="${input_repo:-$config_repo}"
+
+          if [ -z "$raw_repo" ]; then echo "Repo URL required" >&2; exit 1; fi
+
+          # --- FIX: SMART URL DETECTION ---
+          if [[ "$raw_repo" =~ ^https?:// ]]; then
+            clone_url="$raw_repo"
+          else
+            clone_url="https://github.com/${raw_repo}"
+          fi
+
+          # --- FIX: ROBUST AUTH INSERTION ---
           auth_clone_url="$clone_url"
           if [ -n "${GITHUB_TOKEN:-}" ]; then
-             auth_clone_url="https://${GITHUB_ACTOR:-github-actions}:${GITHUB_TOKEN}@github.com/${repo_url}"
+             # Strip existing protocol (http:// or https://) to insert credentials
+             clean_url="${clone_url#*://}"
+             auth_clone_url="https://${GITHUB_ACTOR:-github-actions}:${GITHUB_TOKEN}@${clean_url}"
           fi
 
           echo "clone_url=$clone_url" >> "$GITHUB_OUTPUT"
           echo "auth_clone_url=$auth_clone_url" >> "$GITHUB_OUTPUT"
-          echo "repo_label=$repo_url" >> "$GITHUB_OUTPUT"
+          echo "repo_label=$raw_repo" >> "$GITHUB_OUTPUT"
           echo "branch=${input_branch:-main}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
