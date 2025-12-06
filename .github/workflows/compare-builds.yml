@@ -81,6 +81,7 @@ jobs:
                   GIT_TERMINAL_PROMPT: 0
               run: |
                   set -euo pipefail
+                  set -x
                   rm -rf "${TARGET_DIR}"
                   ref="${{ steps.repo.outputs.checkout_ref }}"
                   auth_url="${{ steps.repo.outputs.auth_clone_url }}"
@@ -89,6 +90,16 @@ jobs:
                   chosen_url="$auth_url"
                   if [ -z "$chosen_url" ]; then
                     chosen_url="$base_url"
+                  fi
+
+                  echo "Using ref='$ref'" >&2
+                  echo "Clone URL (masked if tokenized)='$chosen_url'" >&2
+
+                  if [ -n "$ref" ]; then
+                    if ! git ls-remote --heads "$chosen_url" "$ref" >/dev/null 2>&1; then
+                      echo "Requested ref '$ref' not found; falling back to default with no --branch" >&2
+                      ref=""
+                    fi
                   fi
 
                   clone_branch() {
