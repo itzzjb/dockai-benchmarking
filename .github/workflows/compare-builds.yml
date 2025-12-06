@@ -184,6 +184,18 @@ jobs:
                   echo "human_present=$human_present" >> "$GITHUB_OUTPUT"
                   echo "dockai_present=$dockai_present" >> "$GITHUB_OUTPUT"
 
+            - name: Require both Dockerfiles
+              run: |
+                  set -euo pipefail
+                  if [ ! -f "${TARGET_DIR}/Dockerfile" ]; then
+                    echo "Human Dockerfile is missing after DockAI generation." >&2
+                    exit 1
+                  fi
+                  if [ ! -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
+                    echo "DockAI Dockerfile is missing; DockAI generation likely failed." >&2
+                    exit 1
+                  fi
+
             - name: Build human Dockerfile
               if: steps.detect.outputs.human_present == 'true'
               run: |
@@ -293,15 +305,13 @@ jobs:
                   dockai_score=$(score "$dockai_size" "$dockai_layers" "$dockai_hadolint" "$dockai_trivy_total" "$dockai_trivy_high" "$dockai_trivy_critical")
                   cnb_score=$(score "$cnb_size" "$cnb_layers" 0 "$cnb_trivy_total" "$cnb_trivy_high" "$cnb_trivy_critical")
 
-                  # If DockAI image was not built, zero out its score and mark fields as N/A
-                  if [ "${DOCKAI_PRESENT}" != "true" ] || ! docker image inspect "${DOCKAI_IMG}" >/dev/null 2>&1; then
-                    dockai_score=0
-                    dockai_size=0
-                    dockai_layers=0
-                    dockai_hadolint=0
-                    dockai_trivy_total=0; dockai_trivy_critical=0; dockai_trivy_high=0; dockai_trivy_medium=0; dockai_trivy_low=0
-                    dockai_from="N/A"
-                  fi
+                  # Enforce non-zero metrics by requiring images to exist
+                  for img in "${HUMAN_IMG}" "${DOCKAI_IMG}" "${CNB_IMG}"; do
+                    if ! docker image inspect "$img" >/dev/null 2>&1; then
+                      echo "Expected image $img missing. Failing run to avoid zeroed metrics." >&2
+                      exit 1
+                    fi
+                  done
 
                   winner="DockAI"; best=$dockai_score
                   if awk "BEGIN {exit !($human_score > $best)}"; then best=$human_score; winner="Human"; fi
@@ -349,6 +359,38 @@ jobs:
                   score = 100 - 0.08*sizeMB - 1.2*layers - 0.4*hadolint - 0.18*trivy_total - 0.7*trivy_high - 1.2*trivy_critical (floored at 0)
                   EOF
 
+                  # Append detailed lint and vulnerability tables
+                  render_hadolint() {
+                    local file=$1 label=$2
+                    echo "### Hadolint - ${label}" >> "$report"
+                    if [ -f "$file" ] && [ "$(jq 'length' "$file")" -gt 0 ]; then
+                      jq -r '"| Line | Code | Level | Message |", "| --- | --- | --- | --- |", (.[] | "| \(.line // "-") | \(.code // "-") | \(.level // "-") | \(.message // "-" | gsub("\\|"; "/")) |")' "$file" >> "$report"
+                    else
+                      echo "No findings." >> "$report"
+                    fi
+                    echo "" >> "$report"
+                  }
+
+                  render_trivy() {
+                    local file=$1 label=$2
+                    echo "### Trivy - ${label}" >> "$report"
+                    if [ -f "$file" ] && [ "$(jq '[.Results[].Vulnerabilities[]?] | length' "$file")" -gt 0 ]; then
+                      jq -r '"| ID | Severity | Package | Version | Fixed | Title |", "| --- | --- | --- | --- | --- | --- |", (.Results[]?.Vulnerabilities[]? | "| \(.VulnerabilityID) | \(.Severity) | \(.PkgName) | \(.InstalledVersion // "-") | \(.FixedVersion // "-") | \(.Title // "-" | gsub("\\|"; "/")) |")' "$file" >> "$report"
+                    else
+                      echo "No vulnerabilities found." >> "$report"
+                    fi
+                    echo "" >> "$report"
+                  }
+
+                  echo "" >> "$report"
+                  echo "## Detailed Findings" >> "$report"
+                  render_hadolint hadolint-human.json "Human"
+                  render_hadolint hadolint-dockai.json "DockAI"
+                  render_hadolint /dev/null "CNB (not linted)"
+                  render_trivy trivy-human.json "Human"
+                  render_trivy trivy-dockai.json "DockAI"
+                  render_trivy trivy-cnb.json "CNB"
+
                   echo "report_path=$report" >> "$GITHUB_OUTPUT"
 
                   {
@@ -360,6 +402,8 @@ jobs:
                     echo "| CNB | ${cnb_score} | ${cnb_mb} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low} |"
                     echo ""
                     echo "Detailed report: ${report}"
+                    echo ""
+                    echo "Lint/Vuln details are included in the report for Human, DockAI, and CNB."
                   } >> "$GITHUB_STEP_SUMMARY"
 
             - name: Upload artifacts
