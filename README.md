@@ -15,6 +15,10 @@ The final score ($C_{final}$) is calculated as the sum of a normalized performan
 
 $$C_{final} = C_{total} + P_{quality}$$
 
+### 2.0 Failure Handling and Disqualification
+- Each build (CNB baseline, Human, DockAI) is timed and scanned even if the build command fails; the workflow never stops early.
+- A failed or missing build is marked `failed` and assigned a disqualified score of `9999`, so it cannot win.
+
 ### 2.1 The Normalized Performance Metric ($C_{total}$)
 We compare the Model (Human or DockAI) against the Baseline (CNB). All values are normalized to a ratio, where $1.0$ represents the baseline performance.
 
