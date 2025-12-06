@@ -39,7 +39,7 @@ jobs:
       - name: Set up Trivy CLI (0.68.1)
         uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1
         with:
-          version: 0.68.1
+          version: v0.68.1
           cache: true
 
       - name: Set up pack CLI
@@ -305,14 +305,6 @@ jobs:
           human_hadolint=$(hadolint_count hadolint-human.json)
           dockai_hadolint=$(hadolint_count hadolint-dockai.json)
 
-          # CNB images do not have a Dockerfile to lint; approximate hadolint by the mean of the other builds to avoid zero-skewed scores
-          cnb_hadolint=$(awk -v h="$human_hadolint" -v d="$dockai_hadolint" 'BEGIN {
-            cnt=0; sum=0;
-            if (h != "" && h >= 0) { sum+=h; cnt++; }
-            if (d != "" && d >= 0) { sum+=d; cnt++; }
-            if (cnt>0) { printf "%.0f", sum/cnt; } else { print 5; }
-          }')
-
           read human_trivy_total human_trivy_critical human_trivy_high human_trivy_medium human_trivy_low < <(trivy_totals trivy-human.json)
           read dockai_trivy_total dockai_trivy_critical dockai_trivy_high dockai_trivy_medium dockai_trivy_low < <(trivy_totals trivy-dockai.json)
           read cnb_trivy_total cnb_trivy_critical cnb_trivy_high cnb_trivy_medium cnb_trivy_low < <(trivy_totals trivy-cnb.json)
@@ -327,7 +319,7 @@ jobs:
 
           human_score=$(score "$human_size" "$human_layers" "$human_hadolint" "$human_trivy_total" "$human_trivy_high" "$human_trivy_critical")
           dockai_score=$(score "$dockai_size" "$dockai_layers" "$dockai_hadolint" "$dockai_trivy_total" "$dockai_trivy_high" "$dockai_trivy_critical")
-          cnb_score=$(score "$cnb_size" "$cnb_layers" "$cnb_hadolint" "$cnb_trivy_total" "$cnb_trivy_high" "$cnb_trivy_critical")
+          cnb_score=$(score "$cnb_size" "$cnb_layers" 0 "$cnb_trivy_total" "$cnb_trivy_high" "$cnb_trivy_critical")
 
           # Enforce non-zero metrics by requiring images to exist
           for img in "${HUMAN_IMG}" "${DOCKAI_IMG}" "${CNB_IMG}"; do
@@ -377,11 +369,10 @@ jobs:
           | --- | --- | --- | --- | --- | --- | --- |
           | Human | ${human_hadolint} | ${human_trivy_total} | ${human_trivy_critical} | ${human_trivy_high} | ${human_trivy_medium} | ${human_trivy_low} |
           | DockAI | ${dockai_hadolint} | ${dockai_trivy_total} | ${dockai_trivy_critical} | ${dockai_trivy_high} | ${dockai_trivy_medium} | ${dockai_trivy_low} |
-          | CNB | ${cnb_hadolint} | ${cnb_trivy_total} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low} |
+          | CNB | 0 | ${cnb_trivy_total} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low} |
 
           ## Scoring rule
           score = 100 - 0.08*sizeMB - 1.2*layers - 0.4*hadolint - 0.18*trivy_total - 0.7*trivy_high - 1.2*trivy_critical (floored at 0)
-          - CNB hadolint is estimated as the mean of the other builds (no Dockerfile to lint) to keep metrics comparable.
           EOF
 
           # Append detailed lint and vulnerability tables
