@@ -1,77 +1,103 @@
-# Research Protocol: Composite Optimization Metric ($C_{final}$)
+# Mathematical Framework: The Composite Optimization Metric ($C_{final}$)
 
-This document specifies a reproducible evaluation protocol for comparing three build methods for a target repository: **Human Dockerfile**, **DockAI-generated Dockerfile**, and **Cloud Native Buildpacks (CNB)**. The GitHub Actions workflow in `.github/workflows/compare-builds.yml` executes the protocol end to end.
+**Context:** Comparative Empirical Analysis of AI-Generated Infrastructure-as-Code vs. Cloud Native Buildpacks
+**Metric Version:** 1.0
 
-### At a Glance
-- Objective: minimize $C_{final}$ (performance + lint penalty).
-- Treatments: Human vs DockAI vs CNB baseline.
-- Signals: image size, build time, vulnerability index, Hadolint findings.
-- Outputs: `report.md`, `results.json`, Trivy + Hadolint JSON, timing/status files.
+## 1. Abstract
+To rigorously evaluate the efficacy of AI-generated Dockerfiles ("DockAI"), this research rejects single-dimensional metrics (e.g., measuring only image size) which fail to capture the holistic cost of software artifacts. Instead, we propose a multi-dimensional cost function, the **Composite Optimization Metric ($C_{final}$)**.
 
-## 0. Quickstart (GitHub Actions)
-1) Ensure secrets: `OPENAI_API_KEY` (required), default `GITHUB_TOKEN` (auto).
-2) Set target repo via `workflow_dispatch` inputs (`repo_url`, `branch`) or `config.json` (`repository_url`).
-3) Run the workflow `Compare DockAI vs Human vs CNB (Academic Benchmark)`.
-4) Inspect the GitHub Summary and download the `research-data` artifact for full JSON traces.
+This framework quantifies the trade-off between **storage efficiency**, **build latency**, **security posture**, and **syntactic quality**. The metric normalizes all values against an industry-standard baseline (Cloud Native Buildpacks), ensuring that the resulting score is a dimensionless ratio representing relative improvement or regression.
 
-## 1. Hypothesis and Design
-- **Hypothesis:** AI-generated Dockerfiles (DockAI) can match or surpass human Dockerfiles and CNB baselines on image size, build time, and security posture without increasing lint violations.
-- **Design:** One-shot build-off across three treatments (Human, DockAI, CNB) on the same codebase and commit. All steps run in a single workflow to minimize environmental variance.
-- **Disqualification:** Any build that fails receives a sentinel score of `9999` to prevent selection bias from early termination.
+---
 
-## 2. Metrics and Objective Function
-The final objective is minimized:
+## 2. The Governing Equation
 
-$$C_{final} = C_{total} + P_{quality}$$
+The final score for any given build method $M$ (where $M \in \{Human, DockAI, CNB\}$) is defined as the sum of a weighted performance score and a static quality penalty:
 
-### 2.1 Normalized Performance Metric ($C_{total}$)
-Each term is a ratio to the CNB baseline (1.0 = baseline performance):
+$$C_{final}(M) = \underbrace{\left[ \sum_{i} W_i \cdot \hat{X}_i \right]}_{\text{Performance Score}} + \underbrace{P_{quality}}_{\text{Static Analysis Penalty}}$$
 
-$$C_{total} = W_{size}\left(\frac{S_{model}}{S_{baseline}}\right) + W_{time}\left(\frac{T_{model}}{T_{baseline}}\right) + W_{sec}\left(\frac{\Omega_{model}}{\Omega_{baseline}}\right)$$
+**Interpretation:**
+* **Lower is Better.**
+* $C_{final} < 1.0$: The method is **superior** to the industry baseline.
+* $C_{final} = 1.0$: The method is **equivalent** to the industry baseline (CNB).
+* $C_{final} > 1.0$: The method is **inferior** to the industry baseline.
 
-Where $S$ is image size (bytes), $T$ is build duration (seconds), and $\Omega$ is the vulnerability index. Weights reflect DevSecOps priorities: $W_{sec}=0.5$, $W_{size}=0.3$, $W_{time}=0.2$.
+---
 
-| Term | Symbol | Weight | Rationale |
+## 3. Component Analysis
+
+### 3.1 Baseline Normalization ($\hat{X}$)
+Directly comparing "Megabytes" (Size), "Seconds" (Time), and "Integer Counts" (Vulnerabilities) is mathematically invalid due to unit mismatch. We standardize inputs via **Baseline Normalization**.
+
+For every metric $X$, the normalized value $\hat{X}$ is calculated as:
+
+$$\hat{X}_{model} = \frac{X_{model}}{\max(X_{baseline}, \epsilon)}$$
+
+* **$X_{baseline}$**: The value obtained from the Cloud Native Buildpack (CNB).
+* **$\epsilon$**: A small constant (1) to prevent Division-by-Zero errors if the baseline value is 0.
+
+This transformation converts all raw data into **dimensionless ratios**. For example, if $\hat{S} = 0.6$, the model's image is 60% the size of the baseline (indicating a 40% improvement).
+
+### 3.2 Weighted Priorities ($W_i$)
+The weights ($W$) determine the relative importance of each metric. These are derived from modern DevSecOps priorities, where security is a strictly dominating factor.
+
+| Metric Symbol | Description | Weight ($W$) | Justification |
 | :--- | :--- | :--- | :--- |
-| Security | $W_{sec}$ | 0.5 | CVE risk dominates release gating. |
-| Size | $W_{size}$ | 0.3 | Smaller images reduce transfer/storage cost. |
-| Time | $W_{time}$ | 0.2 | CI latency matters but is secondary. |
+| $\hat{\Omega}$ | **Security Index** | **0.50** | In production environments, Critical CVEs are blockers. Security is weighted highest to penalize vulnerable images severely. |
+| $\hat{S}$ | **Image Size** | **0.30** | Smaller images reduce container registry storage costs and network transfer time (bandwidth), a key efficiency metric for cloud scaling. |
+| $\hat{T}$ | **Build Time** | **0.20** | CI/CD latency is important for developer feedback loops but is secondary to runtime security and operational efficiency. |
 
-### 2.2 Vulnerability Index ($\Omega$)
-Weighted by severity using Trivy JSON output:
+### 3.3 The Security Vulnerability Index ($\Omega$)
+Raw vulnerability counts are insufficient; a single "Critical" CVE poses significantly more risk than 50 "Low" CVEs. We utilize a weighted sum based on the **Trivy** severity classification:
 
-$$\Omega = 10N_{critical} + 5N_{high} + 2N_{medium} + 1N_{low}$$
+$$\Omega = (10 \cdot N_{critical}) + (5 \cdot N_{high}) + (2 \cdot N_{medium}) + (1 \cdot N_{low})$$
 
-### 2.3 Static Analysis Penalty ($P_{quality}$)
-Hadolint JSON output drives a linear penalty:
+Where $N$ is the count of vulnerabilities at that severity level.
 
-$$P_{quality} = 0.1N_{errors} + 0.05N_{warnings}$$
+### 3.4 The Static Analysis Penalty ($P_{quality}$)
+Optimization cannot come at the cost of code quality. We utilize **Hadolint** (Haskell Dockerfile Linter) to enforce best practices (e.g., version pinning, shell safety).
 
-For CNB (no Dockerfile), an empty Hadolint report is emitted so its penalty is zero by construction.
+$$P_{quality} = (0.1 \cdot N_{error}) + (0.05 \cdot N_{warning})$$
 
-## 3. Experimental Procedure (Workflow)
-1) **Checkout**: Fetch the workflow repo and the target repo (from `workflow_dispatch` inputs or `config.json`).
-2) **DockAI generation**: Run `itzzjb/dockai@v3` to produce `Dockerfile.dockai`; preserve the human `Dockerfile` if present.
-3) **Static analysis**: Run `hadolint/hadolint-action@v3.1.0` on human and DockAI Dockerfiles; emit `hadolint-human.json`, `hadolint-dockai.json`; write `hadolint-cnb.json` as `[]`.
-4) **Builds and timing**: Build Human, DockAI, and CNB images (pack builder `paketobuildpacks/builder:base`), capturing wall-clock durations and statuses.
-5) **Security scanning**: Trivy scans each built image for CRITICAL/HIGH/MEDIUM/LOW CVEs, emitting `trivy-*.json`.
-6) **Scoring**: Compute normalized metrics, penalties, and $C_{final}$; disqualify failed builds (`9999`). Select the winner as the lowest valid $C_{final}$.
-7) **Reporting**: Publish a GitHub summary and persist artifacts (`report.md`, `results.json`, Trivy outputs, Hadolint outputs, timing/status files).
+* **Errors** (e.g., invalid syntax) incur a heavy penalty (+0.10 to the final score).
+* **Warnings** (e.g., style suggestions) incur a moderate penalty (+0.05).
+* *Note:* Cloud Native Buildpacks do not produce a Dockerfile to lint; therefore, their $P_{quality}$ is defined as 0.
 
-## 4. Inputs, Secrets, and Environment
-- **Inputs (workflow_dispatch):** `repo_url` (e.g., `owner/repo` or full HTTPS), `branch` (default `main`).
-- **Config fallback:** `config.json` with `repository_url` is used if inputs are empty.
-- **Secrets:** `OPENAI_API_KEY` is required by DockAI; `GITHUB_TOKEN` is used for authenticated clone.
-- **Runner:** `ubuntu-latest` with Docker, Buildx, pack, Trivy, and Hadolint (installed via official actions). Expect several GB of disk for three images.
+---
 
-## 5. Reproducibility Notes
-- All three builds run in the same job to control for host variance.
-- Baseline normalization uses CNB metrics; zero-division is guarded by fallback to 1.
-- Failed builds are retained in the dataset with `status` and `9999` scores to avoid survivorship bias.
-- Artifacts contain the full JSON traces to enable post-hoc analysis and re-scoring.
+## 4. Edge Case Handling: Survivorship Bias
+To ensure scientific rigor, we address the "failed build" scenario. If a generated Dockerfile fails to build successfully, simply assigning it a score of 0 or infinity would distort the statistical mean.
 
-## 6. Outputs and Interpretation
-- **Artifacts:** `report.md`, `results.json`, `trivy-*.json`, `hadolint-*.json`, `*_time.txt`, `*_status.txt`.
-- **Winner selection:** lowest valid $C_{final}$; failed builds stay in the record with `9999`.
-- **Penalty behavior:** Hadolint errors add 0.1 each; warnings add 0.05 each; CNB penalty is zero (no Dockerfile).
-- **Security weight:** dominates the objective; large CVE reductions can offset slower builds.
+**Protocol:**
+If `build_status != success`:
+$$C_{final} = 9999$$
+
+This "Sentinel Value" ensures that failed experiments are clearly categorized as inferior to any functional build, preventing the AI from "winning" by generating empty or non-functional code.
+
+---
+
+## 5. Worked Example Calculation
+
+Let us calculate the score for a hypothetical **DockAI** run compared to a **CNB Baseline**.
+
+**1. Raw Data Input**
+* **CNB (Baseline):** Size=200MB, Time=40s, Security Index=500.
+* **DockAI (Model):** Size=100MB, Time=10s, Security Index=50.
+* **DockAI Linting:** 0 Errors, 2 Warnings.
+
+**2. Normalization Step**
+* $\hat{S}$ (Size Ratio) = $100 / 200 = \mathbf{0.5}$
+* $\hat{T}$ (Time Ratio) = $10 / 40 = \mathbf{0.25}$
+* $\hat{\Omega}$ (Security Ratio) = $50 / 500 = \mathbf{0.1}$
+
+**3. Weighted Sum Calculation ($C_{total}$)**
+$$C_{total} = (0.3 \cdot 0.5) + (0.2 \cdot 0.25) + (0.5 \cdot 0.1)$$
+$$C_{total} = 0.15 + 0.05 + 0.05 = \mathbf{0.25}$$
+
+**4. Penalty Application ($P_{quality}$)**
+$$P_{quality} = (0.1 \cdot 0) + (0.05 \cdot 2) = \mathbf{0.10}$$
+
+**5. Final Score ($C_{final}$)**
+$$C_{final} = 0.25 + 0.10 = \mathbf{0.35}$$
+
+**Conclusion:** The DockAI method scored **0.35**. Since $0.35 < 1.0$, the AI model is significantly optimized compared to the industry standard, offering a 65% reduction in the composite cost.
