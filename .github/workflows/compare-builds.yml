@@ -38,6 +38,15 @@ jobs:
                     cp "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.human"
                   fi
 
+            - name: Check human Dockerfile presence
+              id: human_exists
+              run: |
+                  if [ -f "${TARGET_DIR}/Dockerfile.human" ]; then
+                    echo "present=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "present=false" >> $GITHUB_OUTPUT
+                  fi
+
             - name: Generate DockAI Dockerfile
               uses: itzzjb/dockai@v3
               with:
@@ -61,6 +70,15 @@ jobs:
                   if [ -f "${TARGET_DIR}/Dockerfile.human" ]; then
                     mv "${TARGET_DIR}/Dockerfile.human" "${TARGET_DIR}/Dockerfile"
                   fi
+
+            - name: Hadolint human Dockerfile
+              if: ${{ steps.human_exists.outputs.present == 'true' }}
+              run: |
+                  docker run --rm -i hadolint/hadolint hadolint -f json - < "${TARGET_DIR}/Dockerfile" > hadolint-human.json
+
+            - name: Hadolint DockAI Dockerfile
+              run: |
+                  docker run --rm -i hadolint/hadolint hadolint -f json - < "${TARGET_DIR}/Dockerfile.dockai" > hadolint-dockai.json
 
             - name: Build human image (if Dockerfile exists)
               run: |
@@ -87,12 +105,38 @@ jobs:
                   sudo chmod +x /usr/local/bin/pack
                   /usr/local/bin/pack --version
 
+            - name: Install Trivy
+              run: |
+                  set -euo pipefail
+                  sudo apt-get update -qq
+                  sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+                  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+                  echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+                  sudo apt-get update -qq
+                  sudo apt-get install -y trivy
+
             - name: Build CNB image
               run: |
                   pack build ${CNB_IMG} \
                     --path ${TARGET_DIR} \
                     --builder paketobuildpacks/builder:base \
                     --pull-policy if-not-present
+
+            - name: Run Trivy scan on human image
+              if: ${{ steps.human_exists.outputs.present == 'true' }}
+              run: |
+                  set -euo pipefail
+                  trivy image --quiet --format json -o trivy-human.json ${HUMAN_IMG}
+
+            - name: Run Trivy scan on DockAI image
+              run: |
+                  set -euo pipefail
+                  trivy image --quiet --format json -o trivy-dockai.json ${DOCKAI_IMG}
+
+            - name: Run Trivy scan on CNB image
+              run: |
+                  set -euo pipefail
+                  trivy image --quiet --format json -o trivy-cnb.json ${CNB_IMG}
 
             - name: Collect metrics and compare
               id: metrics
@@ -118,16 +162,56 @@ jobs:
                   read dockai_size dockai_layers < <(get_size_layers ${DOCKAI_IMG})
                   read cnb_size cnb_layers < <(get_size_layers ${CNB_IMG})
 
-                  score() {
-                    sz_bytes=$1
-                    layers=$2
-                    raw=$(python -c "sz=${sz_bytes}; layers=${layers}; print(max(0, 100 - (sz/1024/1024)*0.1 - layers*1.5))")
-                    echo "$raw"
+                  human_hadolint="N/A"
+                  if [ -f hadolint-human.json ]; then
+                    human_hadolint=$(jq 'length' hadolint-human.json)
+                  fi
+                  dockai_hadolint="N/A"
+                  if [ -f hadolint-dockai.json ]; then
+                    dockai_hadolint=$(jq 'length' hadolint-dockai.json)
+                  fi
+
+                  trivy_totals() {
+                    file=$1
+                    if [ -f "$file" ]; then
+                      total=$(jq '[.Results[].Vulnerabilities[]?] | length' "$file")
+                      high=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH" or .Severity=="CRITICAL")] | length' "$file")
+                      echo "$total $high"
+                    else
+                      echo "N/A N/A"
+                    fi
                   }
 
-                  human_score=$(score $human_size $human_layers)
-                  dockai_score=$(score $dockai_size $dockai_layers)
-                  cnb_score=$(score $cnb_size $cnb_layers)
+                  read human_trivy_total human_trivy_high < <(trivy_totals trivy-human.json)
+                  read dockai_trivy_total dockai_trivy_high < <(trivy_totals trivy-dockai.json)
+                  read cnb_trivy_total cnb_trivy_high < <(trivy_totals trivy-cnb.json)
+
+                  to_num() {
+                    val=$1
+                    if echo "$val" | grep -Eq '^[0-9]+$'; then
+                      echo "$val"
+                    else
+                      echo 0
+                    fi
+                  }
+
+                  score() {
+                    sz_bytes=$1; layers=$2; hadocnt=$3; trivytotal=$4; trivyhigh=$5
+                    python - <<'PY'
+                    import os
+                    sz_bytes=float(os.environ.get("SZ",0))
+                    layers=float(os.environ.get("LAYERS",0))
+                    hadocnt=float(os.environ.get("HADO",0))
+                    trivyt=float(os.environ.get("TRIVY_T",0))
+                    trivyh=float(os.environ.get("TRIVY_H",0))
+                    score=max(0, 100 - (sz_bytes/1024/1024)*0.1 - layers*1.5 - hadocnt*0.5 - trivyt*0.25 - trivyh*1.0)
+                    print(score)
+                    PY
+                  }
+
+                  human_score=$(SZ=$human_size LAYERS=$human_layers HADO=$(to_num $human_hadolint) TRIVY_T=$(to_num $human_trivy_total) TRIVY_H=$(to_num $human_trivy_high) score)
+                  dockai_score=$(SZ=$dockai_size LAYERS=$dockai_layers HADO=$(to_num $dockai_hadolint) TRIVY_T=$(to_num $dockai_trivy_total) TRIVY_H=$(to_num $dockai_trivy_high) score)
+                  cnb_score=$(SZ=$cnb_size LAYERS=$cnb_layers HADO=0 TRIVY_T=$(to_num $cnb_trivy_total) TRIVY_H=$(to_num $cnb_trivy_high) score)
 
                   printf '%s\n' \
                     '# Container Build Comparison' \
@@ -147,9 +231,16 @@ jobs:
                     "| DockAI | ${dockai_size} | ${dockai_layers} | ${dockai_score} |" \
                     "| CNB | ${cnb_size} | ${cnb_layers} | ${cnb_score} |" \
                     '' \
+                    '## Lint & Vulnerability Summary' \
+                    '| Item | Hadolint Findings | Trivy Vulns (total) | Trivy High/Critical |' \
+                    '| --- | --- | --- | --- |' \
+                    "| Human | ${human_hadolint} | ${human_trivy_total} | ${human_trivy_high} |" \
+                    "| DockAI | ${dockai_hadolint} | ${dockai_trivy_total} | ${dockai_trivy_high} |" \
+                    "| CNB | N/A | ${cnb_trivy_total} | ${cnb_trivy_high} |" \
+                    '' \
                     '## Notes' \
-                    '- Scores are: 100 - 0.1*sizeMB - 1.5*layers (floored at 0).' \
-                    '- Higher score indicates smaller image and fewer layers.' \
+                    '- Scores: 100 - 0.1*sizeMB - 1.5*layers - 0.5*hadolint_count - 0.25*trivy_total - 1.0*trivy_high (floored at 0).' \
+                    '- Higher score rewards smaller images, fewer layers, and fewer lint/vuln findings.' \
                     '- Base images extracted from first FROM line.' \
                     > "$report"
                   echo "report_path=$report" >> $GITHUB_OUTPUT
@@ -158,7 +249,13 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                   name: comparison-report
+                  if-no-files-found: warn
                   path: |
                       report.md
                       ${{ env.TARGET_DIR }}/Dockerfile
                       ${{ env.TARGET_DIR }}/Dockerfile.dockai
+                      hadolint-human.json
+                      hadolint-dockai.json
+                      trivy-human.json
+                      trivy-dockai.json
+                      trivy-cnb.json
