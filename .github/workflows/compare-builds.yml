@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout workflow repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.1
 
       - name: Install jq
         run: |
@@ -37,13 +37,13 @@ jobs:
           sudo apt-get install -y jq
 
       - name: Set up Trivy CLI (latest v0 tag)
-        uses: aquasecurity/setup-trivy@v0.2.1
+        uses: aquasecurity/setup-trivy@v0.2.4
         with:
           version: latest
           cache: true
 
       - name: Set up pack CLI
-        uses: buildpacks/github-actions/setup-pack@v5.7.1
+        uses: buildpacks/github-actions/setup-pack@v5.9.7
         with:
           pack-version: ${{ env.PACK_VERSION }}
 
@@ -152,7 +152,7 @@ jobs:
           fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.11.1
 
       - name: Detect Dockerfiles
         id: detect
@@ -198,7 +198,7 @@ jobs:
             --pull-policy if-not-present
 
       - name: Lint Human Dockerfile (hadolint)
-        uses: hadolint/hadolint-action@master
+        uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: ${{ env.TARGET_DIR }}/Dockerfile
           format: json
@@ -206,7 +206,7 @@ jobs:
         id: hadolint_human
 
       - name: Lint DockAI Dockerfile (hadolint)
-        uses: hadolint/hadolint-action@master
+        uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.dockai
           format: json
@@ -229,7 +229,7 @@ jobs:
           done
 
       - name: Trivy scan (Human)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ env.HUMAN_IMG }}
           format: json
@@ -239,7 +239,7 @@ jobs:
           ignore-unfixed: false
 
       - name: Trivy scan (DockAI)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ env.DOCKAI_IMG }}
           format: json
@@ -249,7 +249,7 @@ jobs:
           ignore-unfixed: false
 
       - name: Trivy scan (CNB)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ env.CNB_IMG }}
           format: json
@@ -432,7 +432,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5.0.0
         with:
           name: compare-builds
           path: |
