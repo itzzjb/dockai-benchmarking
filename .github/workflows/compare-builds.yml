@@ -36,10 +36,10 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install -y jq
 
-            - name: Set up Trivy CLI
-              uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1
+            - name: Set up Trivy CLI (latest)
+              uses: aquasecurity/setup-trivy@master
               with:
-                  version: v0.68.1
+                  version: latest
                   cache: true
 
             - name: Set up pack CLI
@@ -222,7 +222,7 @@ jobs:
                     --pull-policy if-not-present
 
             - name: Lint Human Dockerfile (hadolint)
-              uses: hadolint/hadolint-action@v3.1.0
+              uses: hadolint/hadolint-action@master
               with:
                   dockerfile: ${{ env.TARGET_DIR }}/Dockerfile
                   format: json
@@ -231,7 +231,7 @@ jobs:
               id: hadolint_human
 
             - name: Lint DockAI Dockerfile (hadolint)
-              uses: hadolint/hadolint-action@v3.1.0
+              uses: hadolint/hadolint-action@master
               with:
                   dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.dockai
                   format: json
