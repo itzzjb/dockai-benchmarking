@@ -278,7 +278,7 @@ jobs:
                   dockai_mb=$(bytes_to_mb "$dockai_size")
                   cnb_mb=$(bytes_to_mb "$cnb_size")
 
-                  cat > "$report" <<'EOF'
+                  cat > "$report" <<EOF
                   # Container Build Comparison
 
                   ## Inputs
