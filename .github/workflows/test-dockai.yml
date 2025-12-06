@@ -19,8 +19,10 @@ jobs:
               id: read-config
               run: |
                   REPO_URL=$(jq -r '.repository_url' config.json)
-                  echo "repo_url=$REPO_URL" >> $GITHUB_OUTPUT
-                  echo "Target repository: $REPO_URL"
+                  # Extract owner/repo from full URL if needed
+                  REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
+                  echo "repo_url=$REPO_PATH" >> $GITHUB_OUTPUT
+                  echo "Target repository: $REPO_PATH"
 
             - name: Checkout target repository
               uses: actions/checkout@v4
