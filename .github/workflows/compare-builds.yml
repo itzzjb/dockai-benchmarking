@@ -106,35 +106,19 @@ jobs:
                   set -euo pipefail
                   rm -rf "${TARGET_DIR}"
                   ref="${{ steps.repo.outputs.branch }}"
-                  auth_url="${{ steps.repo.outputs.auth_clone_url }}"
-                  base_url="${{ steps.repo.outputs.clone_url }}"
+                    printf '%s\n' \
+                      'Winner | Score | Size (MB) | Critical | High | Medium | Low' \
+                      '--- | --- | --- | --- | --- | --- | ---' \
+                      "Human | ${human_score} | ${human_mb} | ${human_trivy_critical} | ${human_trivy_high} | ${human_trivy_medium} | ${human_trivy_low}" \
+                      "DockAI | ${dockai_score} | ${dockai_mb} | ${dockai_trivy_critical} | ${dockai_trivy_high} | ${dockai_trivy_medium} | ${dockai_trivy_low}" \
+                      "CNB | ${cnb_score} | ${cnb_mb} | ${cnb_trivy_critical} | ${cnb_trivy_high} | ${cnb_trivy_medium} | ${cnb_trivy_low}" \
+                      > "$report"
                   chosen_url="$auth_url"
-                  if [ -z "$chosen_url" ]; then chosen_url="$base_url"; fi
-
-                  try_clone() {
-                    git clone --depth=1 --branch "$1" "$chosen_url" "${TARGET_DIR}"
                   }
-                  try_clone_default() {
-                    git clone --depth=1 "$chosen_url" "${TARGET_DIR}"
-                  }
-
                   success=false
-                  if [ -n "$ref" ]; then
-                    try_clone "$ref" && success=true || echo "Clone failed on ref '$ref'" >&2
                   fi
-                  if [ "$success" = false ] && git ls-remote --heads "$chosen_url" main >/dev/null 2>&1; then
-                    echo "Trying fallback 'main'" >&2
-                    try_clone main && success=true
-                  fi
-                  if [ "$success" = false ] && git ls-remote --heads "$chosen_url" master >/dev/null 2>&1; then
-                    echo "Trying fallback 'master'" >&2
-                    try_clone master && success=true
-                  fi
-                  if [ "$success" = false ]; then
-                    first_branch=$(git ls-remote --heads "$chosen_url" 2>/dev/null | awk '{print $2}' | sed 's@refs/heads/@@' | head -n1)
                     if [ -n "$first_branch" ]; then
-                      echo "Trying first available branch '$first_branch'" >&2
-                      try_clone "$first_branch" && success=true
+                    echo "report_path=$report" >> "$GITHUB_OUTPUT"
                     fi
                   fi
                   if [ "$success" = false ]; then
@@ -227,7 +211,6 @@ jobs:
                   dockerfile: ${{ env.TARGET_DIR }}/Dockerfile
                   format: json
                   output-file: hadolint-human.json
-              continue-on-error: true
               id: hadolint_human
 
             - name: Lint DockAI Dockerfile (hadolint)
@@ -236,8 +219,22 @@ jobs:
                   dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.dockai
                   format: json
                   output-file: hadolint-dockai.json
-              continue-on-error: true
               id: hadolint_dockai
+
+            - name: Validate hadolint outputs
+              run: |
+                  set -euo pipefail
+                  for f in hadolint-human.json hadolint-dockai.json; do
+                    if [ ! -f "$f" ]; then
+                      echo "Hadolint output missing: $f" >&2
+                      exit 1
+                    fi
+                    if ! jq -e 'type=="array"' "$f" >/dev/null 2>&1; then
+                      echo "Hadolint output not valid JSON array: $f" >&2
+                      cat "$f" || true
+                      exit 1
+                    fi
+                  done
 
             - name: Trivy scan (Human)
               uses: aquasecurity/trivy-action@master
@@ -297,11 +294,7 @@ jobs:
                   read dockai_size dockai_layers < <(get_size_layers "${DOCKAI_IMG}")
                   read cnb_size cnb_layers < <(get_size_layers "${CNB_IMG}")
 
-                  # Ensure hadolint outputs exist even if the action skipped or failed
-                  [ -f hadolint-human.json ] || echo "[]" > hadolint-human.json
-                  [ -f hadolint-dockai.json ] || echo "[]" > hadolint-dockai.json
-
-                  hadolint_count() { [ -f "$1" ] && jq 'length' "$1" || echo 0; }
+                  hadolint_count() { jq 'length' "$1"; }
                   trivy_totals() {
                     local file=$1
                     if [ -f "$file" ]; then
