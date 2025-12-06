@@ -125,6 +125,25 @@ jobs:
           [ -f "${TARGET_DIR}/Dockerfile" ] && echo "human_present=true" >> "$GITHUB_OUTPUT" || echo "human_present=false" >> "$GITHUB_OUTPUT"
           [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && echo "dockai_present=true" >> "$GITHUB_OUTPUT" || echo "dockai_present=false" >> "$GITHUB_OUTPUT"
 
+      - name: Hadolint Human Dockerfile
+        if: steps.detect.outputs.human_present == 'true'
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ env.TARGET_DIR }}/Dockerfile
+          format: json
+          output-file: hadolint-human.json
+
+      - name: Hadolint DockAI Dockerfile
+        if: steps.detect.outputs.dockai_present == 'true'
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.dockai
+          format: json
+          output-file: hadolint-dockai.json
+
+      - name: Stub Hadolint for CNB (no Dockerfile)
+        run: echo "[]" > hadolint-cnb.json
+
       # --- BUILD & TIME MEASUREMENT STEPS ---
 
       - name: Build Human (Measure Time)
@@ -447,5 +466,6 @@ jobs:
             report.md
             results.json
             trivy-*.json
+            hadolint-*.json
             *_time.txt
             *_status.txt
