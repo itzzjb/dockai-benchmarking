@@ -227,7 +227,7 @@ jobs:
                   dockerfile: |
                       ${{ env.TARGET_DIR }}/Dockerfile
                       ${{ env.TARGET_DIR }}/Dockerfile.dockai
-                      format: json
+                  format: json
               continue-on-error: true
               id: hadolint
 
