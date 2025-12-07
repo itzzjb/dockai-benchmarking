@@ -119,12 +119,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.11.1
 
-      - name: Purge Docker cache and images
+      - name: Purge study images (keep action images)
         if: always()
         run: |
           set -euo pipefail
+          # Remove only the study images to avoid deleting GitHub Action images
           docker image rm -f "${HUMAN_IMG}" "${DOCKAI_IMG}" "${CNB_IMG}" 2>/dev/null || true
-          docker image prune -af || true
+          # Optional: clean BuildKit cache without touching pulled action images
           docker builder prune -af || true
 
       - name: Check Artifact Existence
