@@ -1,4 +1,4 @@
 {
-  "repository_url": "https://github.com/dockersamples/mcp-docker-release-information",
+  "repository_url": "https://github.com/dockersamples/docker-swarm-visualizer",
   "description": "Configuration file for dockai GitHub Action testing. Replace repository_url with the actual repository you want to generate a Dockerfile for."
 }
