@@ -106,10 +106,6 @@ jobs:
           sudo systemctl start docker || true
           docker info
           docker version
-          # Pre-pull likely bases so DockAI doesn't fail on network hiccups
-          docker pull node:18.16.0-alpine || true
-          docker pull nginx:1.20 || true
-
       - name: Generate DockAI Dockerfile
         uses: itzzjb/dockai@v3
         continue-on-error: true
