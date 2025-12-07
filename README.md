@@ -74,6 +74,8 @@ $$C_{final} = 9999$$
 
 This "Sentinel Value" ensures that failed experiments are clearly categorized as inferior to any functional build, preventing the AI from "winning" by generating empty or non-functional code.
 
+**Baseline fallback:** If the CNB baseline build fails, normalization switches to the best successful build (Human or DockAI) to keep ratios finite and avoid artificially inflated scores, while the failed baseline still receives the sentinel value of 9999.
+
 ---
 
 ## 5. Worked Example Calculation
