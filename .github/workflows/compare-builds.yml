@@ -97,6 +97,9 @@ jobs:
             cp "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.human.bak"
           fi
 
+      - name: Set up Docker Buildx (for DockAI)
+        uses: docker/setup-buildx-action@v3.11.1
+
       - name: Generate DockAI Dockerfile
         uses: itzzjb/dockai@v3
         continue-on-error: true
@@ -118,9 +121,6 @@ jobs:
           if [ -f "${TARGET_DIR}/Dockerfile.human.bak" ]; then
             mv "${TARGET_DIR}/Dockerfile.human.bak" "${TARGET_DIR}/Dockerfile"
           fi
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.11.1
 
       - name: Purge study images (keep action images)
         if: always()
