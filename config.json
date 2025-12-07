@@ -1,4 +1,4 @@
 {
-  "repository_url": "https://github.com/dockersamples/catalog-service-node",
+  "repository_url": "https://github.com/dockersamples/linux_tweet_app",
   "description": "Configuration file for dockai GitHub Action testing. Replace repository_url with the actual repository you want to generate a Dockerfile for."
 }
