@@ -321,6 +321,23 @@ jobs:
           [ "$c_time" -le 0 ] && c_time=1
           [ "$c_omega" -le 0 ] && c_omega=1
 
+          # 2b. Normalization baseline: if CNB failed, fall back to best successful build
+          norm_size=$c_size; norm_time=$c_time; norm_omega=$c_omega
+          if [ "$c_status" != "success" ]; then
+            norm_size=0; norm_time=0; norm_omega=0
+            if [ "$h_status" = "success" ]; then
+              norm_size=$h_size; norm_time=$h_time; norm_omega=$h_omega
+            fi
+            if [ "$d_status" = "success" ]; then
+              { [ "$norm_size" -le 0 ] || [ "$d_size" -lt "$norm_size" ]; } && norm_size=$d_size
+              { [ "$norm_time" -le 0 ] || [ "$d_time" -lt "$norm_time" ]; } && norm_time=$d_time
+              { [ "$norm_omega" -le 0 ] || [ "$d_omega" -lt "$norm_omega" ]; } && norm_omega=$d_omega
+            fi
+            [ "$norm_size" -le 0 ] && norm_size=1
+            [ "$norm_time" -le 0 ] && norm_time=1
+            [ "$norm_omega" -le 0 ] && norm_omega=1
+          fi
+
           echo "DEBUG: Baseline - Size:$c_size Time:$c_time Omega:$c_omega"
 
           # 3. CALCULATE METRICS (Awk)
@@ -347,14 +364,14 @@ jobs:
           }
 
           # Calculate Human & DockAI Scores (explicitly capture output, tolerate failures)
-          if output=$(calc_metrics "$h_size" "$h_time" "$h_omega" "$c_size" "$c_time" "$c_omega" 2>/dev/null); then
+          if output=$(calc_metrics "$h_size" "$h_time" "$h_omega" "$norm_size" "$norm_time" "$norm_omega" 2>/dev/null); then
             set -- $output
             h_score=${1:-0}; h_ns=${2:-0}; h_nt=${3:-0}; h_nw=${4:-0}
           else
             h_score=0; h_ns=0; h_nt=0; h_nw=0
           fi
 
-          if output=$(calc_metrics "$d_size" "$d_time" "$d_omega" "$c_size" "$c_time" "$c_omega" 2>/dev/null); then
+          if output=$(calc_metrics "$d_size" "$d_time" "$d_omega" "$norm_size" "$norm_time" "$norm_omega" 2>/dev/null); then
             set -- $output
             d_score=${1:-0}; d_ns=${2:-0}; d_nt=${3:-0}; d_nw=${4:-0}
           else
