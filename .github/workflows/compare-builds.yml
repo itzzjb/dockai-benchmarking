@@ -104,6 +104,9 @@ jobs:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           project_path: ${{ env.TARGET_DIR }}
           max_retries: 5
+          langchain_tracing_v2: true
+          langchain_api_key: ${{ secrets.LANGCHAIN_API_KEY }}
+          langchain_project: dockai
 
       - name: Organize Dockerfiles
         run: |
