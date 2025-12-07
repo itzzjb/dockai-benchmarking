@@ -151,6 +151,7 @@ jobs:
           dockerfile: ${{ env.TARGET_DIR }}/Dockerfile
           format: json
           output-file: hadolint-human.json
+          failure-threshold: error
 
       - name: Hadolint DockAI Dockerfile
         if: steps.detect.outputs.dockai_present == 'true'
@@ -159,6 +160,7 @@ jobs:
           dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.dockai
           format: json
           output-file: hadolint-dockai.json
+          failure-threshold: error
 
       - name: Stub Hadolint for CNB (no Dockerfile)
         run: echo "[]" > hadolint-cnb.json
