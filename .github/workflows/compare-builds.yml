@@ -112,14 +112,14 @@ jobs:
         continue-on-error: true
         env:
           DOCKAI_LLM_PROVIDER: openai
-          DOCKAI_MODEL_ANALYZER: gpt-5-mini
-          DOCKAI_MODEL_BLUEPRINT: gpt-5-mini
-          DOCKAI_MODEL_GENERATOR: gpt-5-mini
-          DOCKAI_MODEL_GENERATOR_ITERATIVE: gpt-5-mini
-          DOCKAI_MODEL_REVIEWER: gpt-5-mini
-          DOCKAI_MODEL_REFLECTOR: gpt-5-mini
-          DOCKAI_MODEL_ERROR_ANALYZER: gpt-5-mini
-          DOCKAI_MODEL_ITERATIVE_IMPROVER: gpt-5-mini
+          DOCKAI_MODEL_ANALYZER: gpt-5
+          DOCKAI_MODEL_BLUEPRINT: gpt-5
+          DOCKAI_MODEL_GENERATOR: gpt-5
+          DOCKAI_MODEL_GENERATOR_ITERATIVE: gpt-5
+          DOCKAI_MODEL_REVIEWER: gpt-5
+          DOCKAI_MODEL_REFLECTOR: gpt-5
+          DOCKAI_MODEL_ERROR_ANALYZER: gpt-5
+          DOCKAI_MODEL_ITERATIVE_IMPROVER: gpt-5
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           project_path: ${{ env.TARGET_DIR }}
