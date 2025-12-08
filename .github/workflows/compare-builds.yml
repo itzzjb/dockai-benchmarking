@@ -506,15 +506,41 @@ jobs:
           \`\`\`
           EOF
 
+      - name: Assemble Artifact Layout
+        if: always()
+        run: |
+          set -euo pipefail
+          ARTIFACT_ROOT="artifact"
+          DOCKERFILES_DIR="$ARTIFACT_ROOT/dockerfiles"
+          DATA_DIR="$ARTIFACT_ROOT/data"
+
+          rm -rf "$ARTIFACT_ROOT"
+          mkdir -p "$DOCKERFILES_DIR" "$DATA_DIR"
+
+          # Keep the report at the artifact root
+          if [ -f "${REPORT_PATH}" ]; then
+            cp "${REPORT_PATH}" "$ARTIFACT_ROOT/"
+          fi
+
+          # Collect Dockerfiles
+          if [ -f "${TARGET_DIR}/Dockerfile" ]; then
+            cp "${TARGET_DIR}/Dockerfile" "$DOCKERFILES_DIR/Dockerfile.human"
+          fi
+          if [ -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
+            cp "${TARGET_DIR}/Dockerfile.dockai" "$DOCKERFILES_DIR/Dockerfile.dockai"
+          fi
+
+          # Gather remaining outputs under data/
+          for f in results.json trivy-*.json hadolint-*.json *_time.txt *_status.txt; do
+            for g in $f; do
+              [ -e "$g" ] || continue
+              cp "$g" "$DATA_DIR/"
+            done
+          done
+
       - name: Upload Research Data
         if: always()
         uses: actions/upload-artifact@v5.0.0
         with:
           name: research-data
-          path: |
-            report.md
-            results.json
-            trivy-*.json
-            hadolint-*.json
-            *_time.txt
-            *_status.txt
+          path: artifact
