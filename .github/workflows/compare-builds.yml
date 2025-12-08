@@ -118,14 +118,14 @@ jobs:
           langchain_api_key: ${{ secrets.LANGCHAIN_API_KEY }}
           langchain_project: dockai
           llm_provider: openai
-          model_analyzer: gpt-5
-          model_blueprint: gpt-5
-          model_generator: gpt-5
-          model_generator_iterative: gpt-5
-          model_reviewer: gpt-5
-          model_reflector: gpt-5
-          model_error_analyzer: gpt-5
-          model_iterative_improver: gpt-5
+          model_analyzer: gpt-5-mini
+          model_blueprint: gpt-5-mini
+          model_generator: gpt-5-mini
+          model_generator_iterative: gpt-5-mini
+          model_reviewer: gpt-5-mini
+          model_reflector: gpt-5-mini
+          model_error_analyzer: gpt-5-mini
+          model_iterative_improver: gpt-5-mini
 
       - name: Organize Dockerfiles
         run: |
