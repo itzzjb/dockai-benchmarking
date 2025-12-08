@@ -108,7 +108,7 @@ jobs:
           docker version
 
       - name: Generate DockAI Dockerfile
-        uses: itzzjb/dockai@v3
+        uses: itzzjb/dockai@v4
         continue-on-error: true
         env:
           DOCKAI_LLM_PROVIDER: openai
