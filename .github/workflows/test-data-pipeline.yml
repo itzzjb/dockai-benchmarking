@@ -19,12 +19,13 @@ jobs:
               run: |
                   set -euo pipefail
                   raw_repo="${GITHUB_REPOSITORY}"
-                  repo_name=$(echo "$raw_repo" | tr '/' '-' | tr ' ' '-')
-                  echo "repo_name=$repo_name" >> "$GITHUB_OUTPUT"
+                                    repo_name_fs=$(echo "$raw_repo" | tr '/' '-')
+                                    echo "repo_name=$raw_repo" >> "$GITHUB_OUTPUT"
+                                    echo "repo_name_fs=$repo_name_fs" >> "$GITHUB_OUTPUT"
 
             - name: Create dummy results and artifact
               env:
-                  REPO_NAME: ${{ steps.repo.outputs.repo_name }}
+                  REPO_NAME: ${{ steps.repo.outputs.repo_name_fs }}
               run: |
                   set -euo pipefail
                   mkdir -p artifact/${REPO_NAME}/data artifact/${REPO_NAME}/dockerfiles
@@ -47,7 +48,6 @@ jobs:
               if: always()
               env:
                   SHEET_ID: ${{ secrets.GDRIVE_SHEET_ID }}
-                  SHEET_TAB: ${{ secrets.GDRIVE_SHEET_TAB }}
                   SA_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
                   REPO_NAME: ${{ steps.repo.outputs.repo_name }}
                   BRANCH_NAME: main
@@ -270,5 +270,5 @@ jobs:
             - name: Upload GitHub Artifact
               uses: actions/upload-artifact@v5.0.0
               with:
-                  name: test-research-data-${{ steps.repo.outputs.repo_name }}
-                  path: artifact/${{ steps.repo.outputs.repo_name }}
+                  name: test-research-data-${{ steps.repo.outputs.repo_name_fs }}
+                  path: artifact/${{ steps.repo.outputs.repo_name_fs }}
