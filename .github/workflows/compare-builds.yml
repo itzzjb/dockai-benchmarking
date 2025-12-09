@@ -632,6 +632,7 @@ jobs:
           import json
           import os
           import sys
+          from datetime import timezone, timedelta
 
           import gspread
           from gspread.utils import rowcol_to_a1
@@ -677,13 +678,13 @@ jobs:
                   ws.format("A:A", {"numberFormat": {"type": "DATE_TIME", "pattern": "yyyy-mm-dd hh:mm:ss"}})
 
                   numeric_formats = [
-                      ("E:E", "0.00"), ("L:L", "0.00"), ("S:S", "0.00"),
-                      ("F:F", "0"),   ("M:M", "0"),   ("T:T", "0"),
-                      ("G:G", "0"),   ("N:N", "0"),   ("U:U", "0"),
-                      ("H:H", "0"),   ("O:O", "0"),   ("V:V", "0"),
-                      ("I:I", "0"),   ("P:P", "0"),   ("W:W", "0"),
-                      ("J:J", "0.0000"), ("Q:Q", "0.0000"), ("X:X", "0.0000"),
-                      ("K:K", "0.0000"), ("R:R", "0.0000"), ("Y:Y", "0.0000"),
+                      ("F:F", "0.00"), ("N:N", "0.00"), ("V:V", "0.00"),
+                      ("G:G", "0"),   ("O:O", "0"),   ("W:W", "0"),
+                      ("H:H", "0"),   ("P:P", "0"),   ("X:X", "0"),
+                      ("I:I", "0"),   ("Q:Q", "0"),   ("Y:Y", "0"),
+                      ("J:J", "0"),   ("R:R", "0"),   ("Z:Z", "0"),
+                      ("K:K", "0.0000"), ("S:S", "0.0000"), ("AA:AA", "0.0000"),
+                      ("L:L", "0.0000"), ("T:T", "0.0000"), ("AB:AB", "0.0000"),
                   ]
 
                   for col_range, pattern in numeric_formats:
@@ -805,7 +806,8 @@ jobs:
               except Exception as exc:
                   print(f"Formatting skipped: {exc}", file=sys.stderr)
 
-          now = datetime.datetime.utcnow().isoformat() + "Z"
+          sri_lanka_tz = timezone(timedelta(hours=5, minutes=30))
+          now = datetime.datetime.now(sri_lanka_tz).strftime("%Y-%m-%d %H:%M:%S")
           winner = get(data, "notes", "winner")
 
           base = get(data, "baseline", default={})
@@ -835,7 +837,7 @@ jobs:
           ]]
 
           headers = [
-              "timestamp_utc",
+              "timestamp_lk",
               "repo",
               "branch",
               "winner",
