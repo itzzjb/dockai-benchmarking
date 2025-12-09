@@ -51,7 +51,6 @@ jobs:
                   SA_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
                   REPO_NAME: ${{ steps.repo.outputs.repo_name }}
                   BRANCH_NAME: main
-                  DRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
               run: |
                   set -euo pipefail
 
@@ -76,8 +75,6 @@ jobs:
                   sheet_tab = os.environ.get("SHEET_TAB")
                   repo_name = os.environ.get("REPO_NAME", "unknown")
                   branch_name = os.environ.get("BRANCH_NAME", "unknown")
-                  drive_folder_id = os.environ.get("DRIVE_FOLDER_ID")
-                  drive_folder_url = f"https://drive.google.com/drive/folders/{drive_folder_id}" if drive_folder_id else ""
 
                   try:
                       with open("results.json", "r", encoding="utf-8") as f:
@@ -124,7 +121,6 @@ jobs:
                       repo_name,
                       branch_name,
                       winner,
-                      drive_folder_url,
                       *row_for(base),
                       *row_for(human),
                       *row_for(dockai),
@@ -135,7 +131,6 @@ jobs:
                       "repo",
                       "branch",
                       "winner",
-                      "drive_folder_url",
                       "baseline_status",
                       "baseline_size_mb",
                       "baseline_time_s",
@@ -182,33 +177,6 @@ jobs:
                   PY
 
                   python /tmp/update_sheet.py
-
-            - name: Upload Archive To Google Drive (optional)
-              if: always()
-              env:
-                  REPO_NAME: ${{ steps.repo.outputs.repo_name }}
-                  GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
-                  GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
-              run: |
-                  set -euo pipefail
-                  if [ -z "${GDRIVE_SERVICE_ACCOUNT_KEY:-}" ] || [ -z "${GDRIVE_FOLDER_ID:-}" ]; then
-                    echo "Drive secrets not set; skipping upload" >&2
-                    exit 0
-                  fi
-
-                  tar -czf "research-data-${REPO_NAME}.tar.gz" -C artifact "${REPO_NAME}"
-
-                  sudo apt-get update
-                  sudo apt-get install -y rclone
-
-                  echo "$GDRIVE_SERVICE_ACCOUNT_KEY" > /tmp/gdrive-sa.json
-                  rclone config create gdrive drive scope=drive service_account_file=/tmp/gdrive-sa.json --non-interactive
-                    if ! rclone lsjson gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me > /tmp/gdrive-ls.json; then
-                        echo "Cannot access Drive folder ID '$GDRIVE_FOLDER_ID'. Ensure the folder exists and is shared with this service account." >&2
-                        exit 1
-                    fi
-
-                    rclone copy "research-data-${REPO_NAME}.tar.gz" gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me --progress
 
             - name: Upload GitHub Artifact
               uses: actions/upload-artifact@v5.0.0

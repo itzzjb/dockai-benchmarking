@@ -730,4 +730,13 @@ jobs:
           fi
 
           # Upload archive into the specified Drive folder (supports shared drives)
-          rclone copy "research-data-${REPO_NAME}.tar.gz" gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me --progress
+          COPY_LOG=/tmp/rclone-copy.log
+          if ! rclone copy "research-data-${REPO_NAME}.tar.gz" gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me --progress --log-file "$COPY_LOG" --log-format "date,time,level,msg" --log-level INFO; then
+            if grep -qi "storageQuotaExceeded" "$COPY_LOG"; then
+              echo "Drive upload skipped: service account has no storage quota; use a Shared Drive and add this service account as Content Manager." >&2
+              exit 0
+            fi
+            echo "rclone copy failed; log follows:" >&2
+            cat "$COPY_LOG" >&2
+            exit 1
+          fi
