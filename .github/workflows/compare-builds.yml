@@ -25,11 +25,28 @@ jobs:
       - name: Checkout workflow repo
         uses: actions/checkout@v6.0.1
 
+      # Cache apt packages to avoid repeated downloads
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/compare-builds.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
       - name: Install dependencies
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y jq bc
+
+      # Cache pip packages for faster Google Sheets integration
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: ".github/requirements.txt"
 
       - name: Set up Trivy CLI (0.68.1)
         uses: aquasecurity/setup-trivy@e6c2c5e321ed9123bda567646e2f96565e34abe1
@@ -111,6 +128,18 @@ jobs:
 
       - name: Set up Docker Buildx (for DockAI)
         uses: docker/setup-buildx-action@v3.11.1
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
 
       - name: Verify Docker daemon and warm images
         run: |
@@ -118,6 +147,17 @@ jobs:
           sudo systemctl start docker || true
           docker info
           docker version
+
+      # Cache UV dependencies (CUDA/PyTorch packages for DockAI) to avoid 15-minute downloads
+      - name: Cache UV packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            /home/runner/work/_temp/setup-uv-cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
 
       - name: Generate DockAI Dockerfile
         uses: itzzjb/dockai@v4
@@ -574,10 +614,8 @@ jobs:
             exit 0
           fi
 
-          echo "$SA_KEY" > /tmp/sa.json
-          python -m pip install --quiet gspread google-auth
-
-          cat <<'PY' > /tmp/update_sheet.py
+                  echo "$SA_KEY" > /tmp/sa.json
+                  python -m pip install --quiet -r .github/requirements.txt          cat <<'PY' > /tmp/update_sheet.py
           import datetime
           import json
           import os
