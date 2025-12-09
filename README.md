@@ -16,11 +16,19 @@ The final score for any given build method $M$ (where $M \in \{Human, DockAI, CN
 
 $$C_{final}(M) = \underbrace{\left[ \sum_{i} W_i \cdot \hat{X}_i \right]}_{\text{Performance Score}} \times \underbrace{\left(1 + P_{quality}\right)}_{\text{Scaled Static Penalty}}$$
 
+**Why multiplicative?** The performance term $\sum_i W_i \hat{X}_i$ is dimensionless and bounded below by 0. Multiplying by $(1 + P_{quality})$ scales that base score: $P_{quality}=0$ leaves it unchanged; small lint issues ($P_{quality} \approx 0.05$) increase the score by about 5%; larger lint debt scales proportionally. This avoids the additive case where a tiny performance score could be overwhelmed by a fixed penalty.
+
 **Interpretation:**
 * **Lower is Better.**
 * $C_{final} < 1.0$: The method is **superior** to the industry baseline.
 * $C_{final} = 1.0$: The method is **equivalent** to the industry baseline (CNB).
 * $C_{final} > 1.0$: The method is **inferior** to the industry baseline.
+
+**Mathematical rationale (short):**
+* **Dimensionless core:** Each $\hat{X}_i$ is a ratio, so $\sum_i W_i \hat{X}_i$ is dimensionless and comparable across metrics.
+* **Convex weighting:** $\sum_i W_i = 1$ (0.3 + 0.2 + 0.5), so the performance score is a convex combination; it remains between the min and max of the normalized inputs.
+* **Multiplicative penalty:** $(1 + P_{quality})$ is a non-negative scalar. When lint is clean, it equals 1; when lint exists, it proportionally inflates the base score. This preserves ordering induced by the performance term and avoids an additive penalty overwhelming very small scores.
+* **Non-negativity and ordering:** All components are non-negative, so $C_{final} \ge 0$. If every metric strictly improves relative to baseline and lint is clean, $C_{final} < 1$.
 
 ---
 
@@ -35,6 +43,7 @@ $$\hat{X}_{model} = \frac{X_{model}}{\max\left(X_{baseline}, \epsilon \cdot \max
 
 * **$X_{baseline}$**: The value obtained from the Cloud Native Buildpack (CNB).
 * **$\epsilon$**: A small relative constant (default $10^{-6}$) to prevent division-by-zero without distorting ratios when the baseline is small. The relative form keeps scaling proportional for near-zero baselines while still guarding against zero.
+* **Bounds:** If $X_{model} = X_{baseline}$, then $\hat{X}=1$. If $X_{model}<X_{baseline}$, $\hat{X}<1$; if $X_{model}>X_{baseline}$, $\hat{X}>1$. When $X_{baseline}=0$, the denominator becomes $\epsilon$, so $\hat{X}$ reflects how large the model value is relative to the small guard, avoiding infinite ratios.
 
 This transformation converts all raw data into **dimensionless ratios**. For example, if $\hat{S} = 0.6$, the model's image is 60% the size of the baseline (indicating a 40% improvement).
 
@@ -54,6 +63,8 @@ $$\Omega = (10 \cdot N_{critical}) + (5 \cdot N_{high}) + (2 \cdot N_{medium}) +
 
 Where $N$ is the count of vulnerabilities at that severity level.
 
+**Rationale:** The coefficients form an ordinal, monotone mapping of severity into a single scalar so that reducing a critical finding always improves $\Omega$ more than reducing any number of lows. Any positive counts keep $\Omega \ge 0$; zero findings yield $\Omega = 0$.
+
 ### 3.4 The Static Analysis Penalty ($P_{quality}$)
 Optimization cannot come at the cost of code quality. We utilize **Hadolint** (Haskell Dockerfile Linter) to enforce best practices (e.g., version pinning, shell safety).
 
@@ -61,7 +72,7 @@ $$P_{quality} = (0.1 \cdot N_{error}) + (0.05 \cdot N_{warning})$$
 
 * **Errors** (e.g., invalid syntax) incur a heavy penalty (+0.10 to the final score).
 * **Warnings** (e.g., style suggestions) incur a moderate penalty (+0.05).
-* The multiplicative form $C_{final} = (\sum W_i \hat{X}_i)(1 + P_{quality})$ keeps lint penalties proportional to the underlying performance score—penalties cannot swamp a near-zero performance score but still scale linearly with lint findings.
+* The multiplicative form $C_{final} = (\sum_i W_i \hat{X}_i)\,(1 + P_{quality})$ keeps lint penalties proportional to the underlying performance score—penalties cannot swamp a near-zero performance score but still scale linearly with lint findings because $(1+P_{quality})$ acts as a scalar on the weighted sum.
 * *Note:* Cloud Native Buildpacks do not produce a Dockerfile to lint; therefore, their $P_{quality}$ is defined as 0.
 
 ---
