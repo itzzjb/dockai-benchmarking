@@ -16,6 +16,8 @@ The final score for any given build method $M$ (where $M \in \{Human, DockAI, CN
 
 $$C_{final}(M) = \underbrace{\left[ \sum_{i} W_i \cdot \hat{X}_i \right]}_{\text{Performance Score}} \times \underbrace{\left(1 + P_{quality}\right)}_{\text{Scaled Static Penalty}}$$
 
+**Symbols:** $W_i$ are non-negative weights that sum to 1; $\hat{X}_i$ are the normalized, dimensionless metrics (size, time, security) for method $M$; $P_{quality}$ is the non-negative lint penalty derived from Hadolint findings.
+
 **Why multiplicative?** The performance term $\sum_i W_i \hat{X}_i$ is dimensionless and non-negative. Multiplying by $(1 + P_{quality})$ applies a non-negative scalar: when $P_{quality}=0$ the score is unchanged; $P_{quality}=0.05$ inflates the score by about 5%; larger lint debt scales proportionally. This preserves ordering induced by the performance term and avoids the additive case where a tiny performance score could be overwhelmed by a fixed offset. Formally, for any two methods A and B with the same $P_{quality}$,
 $$\sum_i W_i \hat{X}_i^{(A)} < \sum_i W_i \hat{X}_i^{(B)} \;\implies\; C_{final}^{(A)} < C_{final}^{(B)}.$$ 
 
