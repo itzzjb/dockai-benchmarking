@@ -99,10 +99,10 @@ jobs:
                           return ""
 
                   def format_sheet(ws, headers):
-                      # Apply basic readability formatting; best-effort so errors are non-fatal
+                      # Apply readability formatting; best-effort so errors are non-fatal
                       try:
-                          last_col = rowcol_to_a1(1, len(headers))[:-1]
-                          header_range = f"A1:{last_col}1"
+                          last_col_a1 = rowcol_to_a1(1, len(headers))
+                          header_range = f"A1:{last_col_a1}"
 
                           ws.format(header_range, {
                               "textFormat": {"bold": True},
@@ -110,7 +110,9 @@ jobs:
                           })
 
                           ws.freeze(rows=1)
-                          ws.set_basic_filter(f"A1:{last_col}{ws.row_count}")
+                          ws.set_basic_filter(f"A1:{last_col_a1}{ws.row_count}")
+
+                          ws.format("A:A", {"numberFormat": {"type": "DATE_TIME", "pattern": "yyyy-mm-dd hh:mm:ss"}})
 
                           numeric_formats = [
                               ("F:F", "0.00"), ("N:N", "0.00"), ("V:V", "0.00"),
@@ -124,17 +126,61 @@ jobs:
                           for col_range, pattern in numeric_formats:
                               ws.format(col_range, {"numberFormat": {"type": "NUMBER", "pattern": pattern}})
 
+                          # Banding rows for readability
                           ws.spreadsheet.batch_update({
-                              "requests": [{
-                                  "autoResizeDimensions": {
-                                      "dimensions": {
-                                          "sheetId": ws.id,
-                                          "dimension": "COLUMNS",
-                                          "startIndex": 0,
-                                          "endIndex": len(headers),
+                              "requests": [
+                                  {
+                                      "addBanding": {
+                                          "bandedRange": {
+                                              "range": {
+                                                  "sheetId": ws.id,
+                                                  "startRowIndex": 0,
+                                                  "endRowIndex": ws.row_count,
+                                                  "startColumnIndex": 0,
+                                                  "endColumnIndex": len(headers),
+                                              },
+                                              "rowProperties": {
+                                                  "headerColor": {"red": 0.93, "green": 0.95, "blue": 0.99},
+                                                  "firstBandColor": {"red": 0.99, "green": 1.0, "blue": 1.0},
+                                                  "secondBandColor": {"red": 0.97, "green": 0.99, "blue": 1.0},
+                                              },
+                                          }
                                       }
-                                  }
-                              }]
+                                  },
+                                  {
+                                      "autoResizeDimensions": {
+                                          "dimensions": {
+                                              "sheetId": ws.id,
+                                              "dimension": "COLUMNS",
+                                              "startIndex": 0,
+                                              "endIndex": len(headers),
+                                          }
+                                      }
+                                  },
+                                  {
+                                      "addConditionalFormatRule": {
+                                          "rule": {
+                                              "ranges": [{
+                                                  "sheetId": ws.id,
+                                                  "startRowIndex": 1,
+                                                  "startColumnIndex": 3,
+                                                  "endColumnIndex": 4,
+                                                  "endRowIndex": ws.row_count,
+                                              }],
+                                              "booleanRule": {
+                                                  "condition": {
+                                                      "type": "TEXT_EQ",
+                                                      "values": [{"userEnteredValue": "DockAI"}],
+                                                  },
+                                                  "format": {
+                                                      "backgroundColor": {"red": 0.86, "green": 0.96, "blue": 0.88},
+                                                      "textFormat": {"bold": True},
+                                                  },
+                                              },
+                                          },
+                                      },
+                                  },
+                              ]
                           })
                       except Exception as exc:
                           print(f"Formatting skipped: {exc}", file=sys.stderr)
