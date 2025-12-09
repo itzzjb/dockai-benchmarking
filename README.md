@@ -74,7 +74,7 @@ $$P_{quality} = (0.1 \cdot N_{error}) + (0.05 \cdot N_{warning})$$
 
 * **Errors** (e.g., invalid syntax) incur a heavy penalty (+0.10 to the final score).
 * **Warnings** (e.g., style suggestions) incur a moderate penalty (+0.05).
-* The multiplicative form $C_{final} = (\sum_i W_i \hat{X}_i)\,(1 + P_{quality})$ keeps lint penalties proportional to the underlying performance score—penalties cannot swamp a near-zero performance score but still scale linearly with lint findings because $(1+P_{quality})$ acts as a scalar on the weighted sum.
+* The multiplicative form $C_{final} = (\sum_i W_i \hat{X}_i) \times (1 + P_{quality})$ keeps lint penalties proportional to the underlying performance score—penalties cannot swamp a near-zero performance score but still scale linearly with lint findings because $(1+P_{quality})$ acts as a scalar on the weighted sum.
 * *Note:* Cloud Native Buildpacks do not produce a Dockerfile to lint; therefore, their $P_{quality}$ is defined as 0.
 
 ---
