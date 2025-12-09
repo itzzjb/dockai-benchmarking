@@ -614,8 +614,10 @@ jobs:
             exit 0
           fi
 
-                  echo "$SA_KEY" > /tmp/sa.json
-                  python -m pip install --quiet -r .github/requirements.txt          cat <<'PY' > /tmp/update_sheet.py
+          echo "$SA_KEY" > /tmp/sa.json
+          python -m pip install --quiet -r .github/requirements.txt
+
+          cat <<'PY' > /tmp/update_sheet.py
           import datetime
           import json
           import os
