@@ -102,7 +102,7 @@ jobs:
                       # Apply simple readability formatting; best-effort so errors are non-fatal
                       try:
                           last_col_a1 = rowcol_to_a1(1, len(headers))
-                          header_range = f"A1:{last_col_a1}"
+                          header_range = f"A1:{last_col_a1}1"
 
                           ws.format(header_range, {
                               "textFormat": {"bold": True},
@@ -137,7 +137,30 @@ jobs:
                                               "endIndex": len(headers),
                                           }
                                       }
-                                  }
+                                  },
+                                  {
+                                      "addConditionalFormatRule": {
+                                          "rule": {
+                                              "ranges": [{
+                                                  "sheetId": ws.id,
+                                                  "startRowIndex": 1,
+                                                  "endRowIndex": ws.row_count,
+                                                  "startColumnIndex": 3,
+                                                  "endColumnIndex": 4,
+                                              }],
+                                              "booleanRule": {
+                                                  "condition": {
+                                                      "type": "TEXT_EQ",
+                                                      "values": [{"userEnteredValue": "DockAI"}],
+                                                  },
+                                                  "format": {
+                                                      "backgroundColor": {"red": 0.90, "green": 0.97, "blue": 0.91},
+                                                      "textFormat": {"bold": True},
+                                                  },
+                                              },
+                                          },
+                                      },
+                                  },
                               ]
                           })
                       except Exception as exc:
