@@ -2,6 +2,15 @@ name: Compare DockAI vs Human vs CNB (Academic Benchmark)
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_dockai:
+        description: "Skip DockAI generation (for testing)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
   push:
     branches: [main]
     paths:
@@ -160,6 +169,7 @@ jobs:
             ${{ runner.os }}-uv-
 
       - name: Generate DockAI Dockerfile
+        if: github.event.inputs.skip_dockai != 'true'
         uses: itzzjb/dockai@v4
         continue-on-error: true
         with:
