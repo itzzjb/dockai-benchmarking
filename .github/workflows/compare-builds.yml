@@ -307,7 +307,7 @@ jobs:
           calc_final() {
             local base="${1:-0}"
             local pen="${2:-0}"
-            awk -v b="$base" -v p="$pen" 'BEGIN {printf "%.4f", b + p}'
+            awk -v b="$base" -v p="$pen" 'BEGIN {printf "%.4f", b * (1 + p)}'
           }
 
           # Get Raw Values
@@ -401,7 +401,7 @@ jobs:
 
           c_score="1.0000"
 
-          # 4. HADOLINT PENALTIES AND FINAL COST
+          # 4. HADOLINT PENALTIES AND FINAL COST (Multiplicative: C_final = C_total × (1 + P_quality))
           h_penalty=$(calc_penalty "$h_err" "$h_warn")
           d_penalty=$(calc_penalty "$d_err" "$d_warn")
           c_penalty=$(calc_penalty "$c_err" "$c_warn")
@@ -499,13 +499,13 @@ jobs:
 
           ## 2. Mathematical Definition
           The **Composite Optimization Metric (\$C_{total}\$)** is calculated as:
-          \$\$C_{total} = 0.3 \cdot \hat{S} + 0.2 \cdot \hat{T} + 0.5 \cdot \hat{V}\$\$
+          \$\$C_{total} = 0.3 \\cdot \\hat{S} + 0.2 \\cdot \\hat{T} + 0.5 \\cdot \\hat{V}\$\$
 
           The **Static Analysis Penalty** from Hadolint is:
-          \$\$Penalty = 0.1 \cdot Errors + 0.05 \cdot Warnings\$\$
+          \$\$P_{quality} = 0.1 \\cdot Errors + 0.05 \\cdot Warnings\$\$
 
-          The final score adds this penalty:
-          \$\$C_{final} = C_{total} + Penalty\$\$
+          The final score uses multiplicative scaling to keep penalties proportional:
+          \$\$C_{final} = C_{total} \\times (1 + P_{quality})\$\$
 
           Where:
           * \$\hat{S}, \hat{T}, \hat{V}\$ are normalized ratios against the CNB baseline.
@@ -559,23 +559,13 @@ jobs:
           name: research-data-${{ steps.repo.outputs.repo_name }}
           path: artifact/${{ steps.repo.outputs.repo_name }}
 
-      - name: Archive Artifact For Drive
-        if: always()
-        env:
-          REPO_NAME: ${{ steps.repo.outputs.repo_name }}
-        run: |
-          set -euo pipefail
-          tar -czf "research-data-${REPO_NAME}.tar.gz" -C artifact "${REPO_NAME}"
-
       - name: Publish Metrics to Google Sheet
         if: always()
         env:
           SHEET_ID: ${{ secrets.GDRIVE_SHEET_ID }}
-          SHEET_TAB: ${{ secrets.GDRIVE_SHEET_TAB }}
           SA_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
           REPO_NAME: ${{ steps.repo.outputs.repo_name }}
           BRANCH_NAME: ${{ steps.repo.outputs.branch }}
-          DRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           set -euo pipefail
 
@@ -594,14 +584,13 @@ jobs:
           import sys
 
           import gspread
+          from gspread.utils import rowcol_to_a1
           from google.oauth2.service_account import Credentials
 
           sheet_id = os.environ.get("SHEET_ID")
           sheet_tab = os.environ.get("SHEET_TAB")
           repo_name = os.environ.get("REPO_NAME", "unknown")
-            branch_name = os.environ.get("BRANCH_NAME", "unknown")
-          drive_folder_id = os.environ.get("DRIVE_FOLDER_ID")
-          drive_folder_url = f"https://drive.google.com/drive/folders/{drive_folder_id}" if drive_folder_id else ""
+          branch_name = os.environ.get("BRANCH_NAME", "unknown")
 
           try:
               with open("results.json", "r", encoding="utf-8") as f:
@@ -610,81 +599,220 @@ jobs:
               print("results.json not found; skipping sheet update", file=sys.stderr)
               sys.exit(0)
 
-            def get(obj, *keys, default=""):
+          def get(obj, *keys, default=""):
               cur = obj
               for k in keys:
-                if not isinstance(cur, dict) or k not in cur:
-                  return default
-                cur = cur[k]
+                  if not isinstance(cur, dict) or k not in cur:
+                      return default
+                  cur = cur[k]
               return cur
 
-            def to_mb(val):
+          def to_mb(val):
               try:
-                return round(float(val) / 1024 / 1024, 2)
+                  return round(float(val) / 1024 / 1024, 2)
               except Exception:
-                return ""
+                  return ""
 
-            now = datetime.datetime.utcnow().isoformat() + "Z"
-            winner = get(data, "notes", "winner")
+          def format_sheet(ws, headers):
+              # Apply simple readability formatting; best-effort so errors are non-fatal
+              try:
+                  last_col_a1 = rowcol_to_a1(1, len(headers))
+                  last_col_letter = last_col_a1.rstrip("1")
+                  header_range = f"A1:{last_col_letter}1"
+                  data_range = f"A2:{last_col_letter}{ws.row_count}"
 
-            base = get(data, "baseline", default={})
-            human = get(data, "human", default={})
-            dockai = get(data, "dockai", default={})
+                  ws.freeze(rows=1)
+                  ws.set_basic_filter(f"A1:{last_col_letter}{ws.row_count}")
 
-            def row_for(prefix, obj):
+                  ws.format("A:A", {"numberFormat": {"type": "DATE_TIME", "pattern": "yyyy-mm-dd hh:mm:ss"}})
+
+                  numeric_formats = [
+                      ("E:E", "0.00"), ("L:L", "0.00"), ("S:S", "0.00"),
+                      ("F:F", "0"),   ("M:M", "0"),   ("T:T", "0"),
+                      ("G:G", "0"),   ("N:N", "0"),   ("U:U", "0"),
+                      ("H:I", "0"),   ("O:P", "0"),   ("V:W", "0"),
+                      ("J:J", "0.0000"), ("Q:Q", "0.0000"), ("X:X", "0.0000"),
+                      ("K:K", "0.0000"), ("R:R", "0.0000"), ("Y:Y", "0.0000"),
+                  ]
+
+                  for col_range, pattern in numeric_formats:
+                      ws.format(col_range, {"numberFormat": {"type": "NUMBER", "pattern": pattern}})
+
+                  ws.spreadsheet.batch_update({
+                      "requests": [
+                          {
+                              "repeatCell": {
+                                  "range": {
+                                      "sheetId": ws.id,
+                                      "startRowIndex": 0,
+                                      "endRowIndex": 1,
+                                      "startColumnIndex": 0,
+                                      "endColumnIndex": len(headers),
+                                  },
+                                  "cell": {
+                                      "userEnteredFormat": {
+                                          "textFormat": {"bold": True},
+                                          "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95},
+                                          "padding": {"top": 2, "bottom": 2, "left": 6, "right": 6},
+                                      }
+                                  },
+                                  "fields": "userEnteredFormat(textFormat,backgroundColor,padding)",
+                              }
+                          },
+                          {
+                              "repeatCell": {
+                                  "range": {
+                                      "sheetId": ws.id,
+                                      "startRowIndex": 1,
+                                      "endRowIndex": ws.row_count,
+                                      "startColumnIndex": 0,
+                                      "endColumnIndex": len(headers),
+                                  },
+                                  "cell": {
+                                      "userEnteredFormat": {
+                                          "textFormat": {"bold": False},
+                                          "padding": {"top": 2, "bottom": 2, "left": 4, "right": 4},
+                                      }
+                                  },
+                                  "fields": "userEnteredFormat(textFormat,padding)",
+                              }
+                          },
+                          {
+                              "addConditionalFormatRule": {
+                                  "rule": {
+                                      "ranges": [{
+                                          "sheetId": ws.id,
+                                          "startRowIndex": 1,
+                                          "endRowIndex": ws.row_count,
+                                          "startColumnIndex": 3,
+                                          "endColumnIndex": 4,
+                                      }],
+                                      "booleanRule": {
+                                          "condition": {
+                                              "type": "TEXT_EQ",
+                                              "values": [{"userEnteredValue": "DockAI"}],
+                                          },
+                                          "format": {
+                                              "backgroundColor": {"red": 0.90, "green": 0.97, "blue": 0.91},
+                                              "textFormat": {"bold": True},
+                                          },
+                                      },
+                                  },
+                              },
+                          },
+                          {
+                              "repeatCell": {
+                                  "range": {
+                                      "sheetId": ws.id,
+                                      "startRowIndex": 1,
+                                      "endRowIndex": ws.row_count,
+                                      "startColumnIndex": 10,
+                                      "endColumnIndex": 11,
+                                  },
+                                  "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                                  "fields": "userEnteredFormat.textFormat.bold",
+                              }
+                          },
+                          {
+                              "repeatCell": {
+                                  "range": {
+                                      "sheetId": ws.id,
+                                      "startRowIndex": 1,
+                                      "endRowIndex": ws.row_count,
+                                      "startColumnIndex": 17,
+                                      "endColumnIndex": 18,
+                                  },
+                                  "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                                  "fields": "userEnteredFormat.textFormat.bold",
+                              }
+                          },
+                          {
+                              "repeatCell": {
+                                  "range": {
+                                      "sheetId": ws.id,
+                                      "startRowIndex": 1,
+                                      "endRowIndex": ws.row_count,
+                                      "startColumnIndex": 24,
+                                      "endColumnIndex": 25,
+                                  },
+                                  "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                                  "fields": "userEnteredFormat.textFormat.bold",
+                              }
+                          },
+                          {
+                              "autoResizeDimensions": {
+                                  "dimensions": {
+                                      "sheetId": ws.id,
+                                      "dimension": "COLUMNS",
+                                      "startIndex": 0,
+                                      "endIndex": len(headers),
+                                  }
+                              }
+                          }
+                      ]
+                  })
+              except Exception as exc:
+                  print(f"Formatting skipped: {exc}", file=sys.stderr)
+
+          now = datetime.datetime.utcnow().isoformat() + "Z"
+          winner = get(data, "notes", "winner")
+
+          base = get(data, "baseline", default={})
+          human = get(data, "human", default={})
+          dockai = get(data, "dockai", default={})
+
+          def row_for(obj):
               return [
-                get(obj, "status"),
-                to_mb(get(obj, "size")),
-                get(obj, "time"),
-                get(obj, "omega"),
-                get(obj, "errors"),
-                get(obj, "warnings"),
-                get(obj, "penalty"),
-                get(obj, "cost"),
+                  get(obj, "status"),
+                  to_mb(get(obj, "size")),
+                  get(obj, "time"),
+                  get(obj, "omega"),
+                  get(obj, "errors"),
+                  get(obj, "warnings"),
+                  get(obj, "penalty"),
+                  get(obj, "cost"),
               ]
 
-            rows = [[
+          rows = [[
               now,
               repo_name,
               branch_name,
               winner,
-                drive_folder_url,
-              *row_for("baseline", base),
-              *row_for("human", human),
-              *row_for("dockai", dockai),
-            ]]
+              *row_for(base),
+              *row_for(human),
+              *row_for(dockai),
+          ]]
 
-              headers = [
-                "timestamp_utc",
-                "repo",
-                "branch",
-                "winner",
-                "drive_folder_url",
-                "baseline_status",
-                "baseline_size_mb",
-                "baseline_time_s",
-                "baseline_omega",
-                "baseline_errors",
-                "baseline_warnings",
-                "baseline_penalty",
-                "baseline_cost",
-                "human_status",
-                "human_size_mb",
-                "human_time_s",
-                "human_omega",
-                "human_errors",
-                "human_warnings",
-                "human_penalty",
-                "human_cost",
-                "dockai_status",
-                "dockai_size_mb",
-                "dockai_time_s",
-                "dockai_omega",
-                "dockai_errors",
-                "dockai_warnings",
-                "dockai_penalty",
-                "dockai_cost",
-              ]
+          headers = [
+              "timestamp_utc",
+              "repo",
+              "branch",
+              "winner",
+              "baseline_status",
+              "baseline_size_mb",
+              "baseline_time_s",
+              "baseline_omega",
+              "baseline_errors",
+              "baseline_warnings",
+              "baseline_penalty",
+              "baseline_cost",
+              "human_status",
+              "human_size_mb",
+              "human_time_s",
+              "human_omega",
+              "human_errors",
+              "human_warnings",
+              "human_penalty",
+              "human_cost",
+              "dockai_status",
+              "dockai_size_mb",
+              "dockai_time_s",
+              "dockai_omega",
+              "dockai_errors",
+              "dockai_warnings",
+              "dockai_penalty",
+              "dockai_cost",
+          ]
 
           scopes = [
               "https://www.googleapis.com/auth/spreadsheets",
@@ -695,48 +823,15 @@ jobs:
           sheet = client.open_by_key(sheet_id)
           ws = sheet.worksheet(sheet_tab) if sheet_tab else sheet.sheet1
 
-            # Ensure header row exists
-            try:
+          try:
               first_row = ws.row_values(1)
-            except Exception:
+          except Exception:
               first_row = []
-            if not any(first_row):
+          if not any(first_row):
               ws.insert_row(headers, 1)
 
           ws.append_rows(rows, value_input_option="USER_ENTERED")
+          format_sheet(ws, headers)
           PY
 
           python /tmp/update_sheet.py
-
-      - name: Upload Archive To Google Drive
-        if: always()
-        env:
-          REPO_NAME: ${{ steps.repo.outputs.repo_name }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
-          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y rclone
-
-          # Configure rclone with service account JSON
-          echo "$GDRIVE_SERVICE_ACCOUNT_KEY" > /tmp/gdrive-sa.json
-          rclone config create gdrive drive scope=drive service_account_file=/tmp/gdrive-sa.json --non-interactive
-
-          # Preflight folder access
-          if ! rclone lsjson gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me > /tmp/gdrive-ls.json; then
-            echo "Cannot access Drive folder ID '$GDRIVE_FOLDER_ID'. Ensure the folder exists and is shared with this service account." >&2
-            exit 1
-          fi
-
-          # Upload archive into the specified Drive folder (supports shared drives)
-          COPY_LOG=/tmp/rclone-copy.log
-          if ! rclone copy "research-data-${REPO_NAME}.tar.gz" gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me --progress --log-file "$COPY_LOG" --log-format "date,time,level,msg" --log-level INFO; then
-            if grep -qi "storageQuotaExceeded" "$COPY_LOG"; then
-              echo "Drive upload skipped: service account has no storage quota; use a Shared Drive and add this service account as Content Manager." >&2
-              exit 0
-            fi
-            echo "rclone copy failed; log follows:" >&2
-            cat "$COPY_LOG" >&2
-            exit 1
-          fi
