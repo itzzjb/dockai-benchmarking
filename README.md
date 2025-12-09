@@ -6,7 +6,7 @@
 ## 1. Abstract
 To rigorously evaluate the efficacy of AI-generated Dockerfiles ("DockAI"), this research rejects single-dimensional metrics (e.g., measuring only image size) which fail to capture the holistic cost of software artifacts. Instead, we propose a multi-dimensional cost function, the **Composite Optimization Metric ($C_{final}$)**.
 
-This framework quantifies the trade-off between **storage efficiency**, **build latency**, **security posture**, and **syntactic quality**. The metric normalizes all values against an industry-standard baseline (Cloud Native Buildpacks), ensuring that the resulting score is a dimensionless ratio representing relative improvement or regression.
+This framework quantifies the trade-off between **storage efficiency**, **build latency**, **security posture**, and **syntactic quality**. The metric normalizes all values against an industry-standard baseline (Cloud Native Buildpacks), ensuring that the resulting score is a dimensionless ratio representing relative improvement or regression while avoiding edge-case distortions.
 
 ---
 
@@ -14,7 +14,7 @@ This framework quantifies the trade-off between **storage efficiency**, **build 
 
 The final score for any given build method $M$ (where $M \in \{Human, DockAI, CNB\}$) is defined as the sum of a weighted performance score and a static quality penalty:
 
-$$C_{final}(M) = \underbrace{\left[ \sum_{i} W_i \cdot \hat{X}_i \right]}_{\text{Performance Score}} + \underbrace{P_{quality}}_{\text{Static Analysis Penalty}}$$
+$$C_{final}(M) = \underbrace{\left[ \sum_{i} W_i \cdot \hat{X}_i \right]}_{\text{Performance Score}} \times \underbrace{\left(1 + P_{quality}\right)}_{\text{Scaled Static Penalty}}$$
 
 **Interpretation:**
 * **Lower is Better.**
@@ -31,10 +31,10 @@ Directly comparing "Megabytes" (Size), "Seconds" (Time), and "Integer Counts" (V
 
 For every metric $X$, the normalized value $\hat{X}$ is calculated as:
 
-$$\hat{X}_{model} = \frac{X_{model}}{\max(X_{baseline}, \epsilon)}$$
+$$\hat{X}_{model} = \frac{X_{model}}{\max\left(X_{baseline}, \epsilon \cdot \max(1, |X_{baseline}|)\right)}$$
 
 * **$X_{baseline}$**: The value obtained from the Cloud Native Buildpack (CNB).
-* **$\epsilon$**: A small constant (1) to prevent Division-by-Zero errors if the baseline value is 0.
+* **$\epsilon$**: A small relative constant (default $10^{-6}$) to prevent division-by-zero without distorting ratios when the baseline is small. The relative form keeps scaling proportional for near-zero baselines while still guarding against zero.
 
 This transformation converts all raw data into **dimensionless ratios**. For example, if $\hat{S} = 0.6$, the model's image is 60% the size of the baseline (indicating a 40% improvement).
 
@@ -61,6 +61,7 @@ $$P_{quality} = (0.1 \cdot N_{error}) + (0.05 \cdot N_{warning})$$
 
 * **Errors** (e.g., invalid syntax) incur a heavy penalty (+0.10 to the final score).
 * **Warnings** (e.g., style suggestions) incur a moderate penalty (+0.05).
+* The multiplicative form $C_{final} = (\sum W_i \hat{X}_i)(1 + P_{quality})$ keeps lint penalties proportional to the underlying performance score—penalties cannot swamp a near-zero performance score but still scale linearly with lint findings.
 * *Note:* Cloud Native Buildpacks do not produce a Dockerfile to lint; therefore, their $P_{quality}$ is defined as 0.
 
 ---
@@ -74,7 +75,7 @@ $$C_{final} = 9999$$
 
 This "Sentinel Value" ensures that failed experiments are clearly categorized as inferior to any functional build, preventing the AI from "winning" by generating empty or non-functional code.
 
-**Baseline fallback:** If the CNB baseline build fails, normalization switches to the best successful build (Human or DockAI) to keep ratios finite and avoid artificially inflated scores, while the failed baseline still receives the sentinel value of 9999.
+**Baseline fallback:** If the CNB baseline build fails, it still receives $C_{final}=9999$; for normalization of other methods, the baseline switches to the best successful build (Human or DockAI) to keep ratios finite and comparable.
 
 ---
 
@@ -100,6 +101,6 @@ $$C_{total} = 0.15 + 0.05 + 0.05 = \mathbf{0.25}$$
 $$P_{quality} = (0.1 \cdot 0) + (0.05 \cdot 2) = \mathbf{0.10}$$
 
 **5. Final Score ($C_{final}$)**
-$$C_{final} = 0.25 + 0.10 = \mathbf{0.35}$$
+$$C_{final} = 0.25 \times (1 + 0.10) = \mathbf{0.275}$$
 
-**Conclusion:** The DockAI method scored **0.35**. Since $0.35 < 1.0$, the AI model is significantly optimized compared to the industry standard, offering a 65% reduction in the composite cost.
+**Conclusion:** The DockAI method scored **0.275**. Since $0.275 < 1.0$, the AI model is significantly optimized compared to the industry standard, offering a 72.5% reduction in the composite cost.
