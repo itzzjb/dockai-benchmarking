@@ -19,9 +19,9 @@ jobs:
               run: |
                   set -euo pipefail
                   raw_repo="${GITHUB_REPOSITORY}"
-                                    repo_name_fs=$(echo "$raw_repo" | tr '/' '-')
-                                    echo "repo_name=$raw_repo" >> "$GITHUB_OUTPUT"
-                                    echo "repo_name_fs=$repo_name_fs" >> "$GITHUB_OUTPUT"
+                  repo_name_fs=$(echo "$raw_repo" | tr '/' '-')
+                  echo "repo_name=$raw_repo" >> "$GITHUB_OUTPUT"
+                  echo "repo_name_fs=$repo_name_fs" >> "$GITHUB_OUTPUT"
 
             - name: Create dummy results and artifact
               env:
@@ -99,14 +99,14 @@ jobs:
                           return ""
 
                   def format_sheet(ws, headers):
-                      # Apply readability formatting; best-effort so errors are non-fatal
+                      # Apply simple readability formatting; best-effort so errors are non-fatal
                       try:
                           last_col_a1 = rowcol_to_a1(1, len(headers))
                           header_range = f"A1:{last_col_a1}"
 
                           ws.format(header_range, {
                               "textFormat": {"bold": True},
-                              "backgroundColor": {"red": 0.93, "green": 0.95, "blue": 0.99},
+                              "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95},
                           })
 
                           ws.freeze(rows=1)
@@ -126,27 +126,8 @@ jobs:
                           for col_range, pattern in numeric_formats:
                               ws.format(col_range, {"numberFormat": {"type": "NUMBER", "pattern": pattern}})
 
-                          # Banding rows for readability
                           ws.spreadsheet.batch_update({
                               "requests": [
-                                  {
-                                      "addBanding": {
-                                          "bandedRange": {
-                                              "range": {
-                                                  "sheetId": ws.id,
-                                                  "startRowIndex": 0,
-                                                  "endRowIndex": ws.row_count,
-                                                  "startColumnIndex": 0,
-                                                  "endColumnIndex": len(headers),
-                                              },
-                                              "rowProperties": {
-                                                  "headerColor": {"red": 0.93, "green": 0.95, "blue": 0.99},
-                                                  "firstBandColor": {"red": 0.99, "green": 1.0, "blue": 1.0},
-                                                  "secondBandColor": {"red": 0.97, "green": 0.99, "blue": 1.0},
-                                              },
-                                          }
-                                      }
-                                  },
                                   {
                                       "autoResizeDimensions": {
                                           "dimensions": {
@@ -156,30 +137,7 @@ jobs:
                                               "endIndex": len(headers),
                                           }
                                       }
-                                  },
-                                  {
-                                      "addConditionalFormatRule": {
-                                          "rule": {
-                                              "ranges": [{
-                                                  "sheetId": ws.id,
-                                                  "startRowIndex": 1,
-                                                  "startColumnIndex": 3,
-                                                  "endColumnIndex": 4,
-                                                  "endRowIndex": ws.row_count,
-                                              }],
-                                              "booleanRule": {
-                                                  "condition": {
-                                                      "type": "TEXT_EQ",
-                                                      "values": [{"userEnteredValue": "DockAI"}],
-                                                  },
-                                                  "format": {
-                                                      "backgroundColor": {"red": 0.86, "green": 0.96, "blue": 0.88},
-                                                      "textFormat": {"bold": True},
-                                                  },
-                                              },
-                                          },
-                                      },
-                                  },
+                                  }
                               ]
                           })
                       except Exception as exc:
