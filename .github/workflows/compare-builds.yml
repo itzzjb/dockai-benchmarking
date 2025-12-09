@@ -81,6 +81,18 @@ jobs:
           echo "clone_url=$clone_url" >> "$GITHUB_OUTPUT"
           echo "auth_clone_url=$auth_clone_url" >> "$GITHUB_OUTPUT"
           echo "repo_label=$raw_repo" >> "$GITHUB_OUTPUT"
+          # Derive repository name without protocol/host or .git suffix, then fold owner/repo into a single safe name
+          repo_path=$(echo "$raw_repo" \
+            | sed 's#^[^:/]*://##' \
+            | sed 's#^[^@]*@##' \
+            | sed 's#^[^:]*:##' \
+            | sed 's#/$##' \
+            | sed 's#\.git$##')
+
+          # Replace slashes with hyphens to include owner and sanitize spaces
+          repo_name=$(echo "$repo_path" | tr '/' '-' | tr ' ' '-')
+          if [ -z "$repo_name" ]; then repo_name="${TARGET_DIR}"; fi
+          echo "repo_name=$repo_name" >> "$GITHUB_OUTPUT"
           echo "branch=${input_branch:-main}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
@@ -508,9 +520,11 @@ jobs:
 
       - name: Assemble Artifact Layout
         if: always()
+        env:
+          REPO_NAME: ${{ steps.repo.outputs.repo_name }}
         run: |
           set -euo pipefail
-          ARTIFACT_ROOT="artifact"
+          ARTIFACT_ROOT="artifact/${REPO_NAME}"
           DOCKERFILES_DIR="$ARTIFACT_ROOT/dockerfiles"
           DATA_DIR="$ARTIFACT_ROOT/data"
 
@@ -542,5 +556,172 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v5.0.0
         with:
-          name: research-data
-          path: artifact
+          name: research-data-${{ steps.repo.outputs.repo_name }}
+          path: artifact/${{ steps.repo.outputs.repo_name }}
+
+      - name: Archive Artifact For Drive
+        if: always()
+        env:
+          REPO_NAME: ${{ steps.repo.outputs.repo_name }}
+        run: |
+          set -euo pipefail
+          tar -czf "research-data-${REPO_NAME}.tar.gz" -C artifact "${REPO_NAME}"
+
+      - name: Publish Metrics to Google Sheet
+        if: always()
+        env:
+          SHEET_ID: ${{ secrets.GDRIVE_SHEET_ID }}
+          SHEET_TAB: ${{ secrets.GDRIVE_SHEET_TAB }}
+          SA_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+          REPO_NAME: ${{ steps.repo.outputs.repo_name }}
+          BRANCH_NAME: ${{ steps.repo.outputs.branch }}
+          DRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SHEET_ID:-}" ]; then
+            echo "SHEET_ID not set; skipping sheet update" >&2
+            exit 0
+          fi
+
+          echo "$SA_KEY" > /tmp/sa.json
+          python -m pip install --quiet gspread google-auth
+
+          cat <<'PY' > /tmp/update_sheet.py
+          import datetime
+          import json
+          import os
+          import sys
+
+          import gspread
+          from google.oauth2.service_account import Credentials
+
+          sheet_id = os.environ.get("SHEET_ID")
+          sheet_tab = os.environ.get("SHEET_TAB")
+          repo_name = os.environ.get("REPO_NAME", "unknown")
+            branch_name = os.environ.get("BRANCH_NAME", "unknown")
+          drive_folder_id = os.environ.get("DRIVE_FOLDER_ID")
+          drive_folder_url = f"https://drive.google.com/drive/folders/{drive_folder_id}" if drive_folder_id else ""
+
+          try:
+              with open("results.json", "r", encoding="utf-8") as f:
+                  data = json.load(f)
+          except FileNotFoundError:
+              print("results.json not found; skipping sheet update", file=sys.stderr)
+              sys.exit(0)
+
+            def get(obj, *keys, default=""):
+              cur = obj
+              for k in keys:
+                if not isinstance(cur, dict) or k not in cur:
+                  return default
+                cur = cur[k]
+              return cur
+
+            def to_mb(val):
+              try:
+                return round(float(val) / 1024 / 1024, 2)
+              except Exception:
+                return ""
+
+            now = datetime.datetime.utcnow().isoformat() + "Z"
+            winner = get(data, "notes", "winner")
+
+            base = get(data, "baseline", default={})
+            human = get(data, "human", default={})
+            dockai = get(data, "dockai", default={})
+
+            def row_for(prefix, obj):
+              return [
+                get(obj, "status"),
+                to_mb(get(obj, "size")),
+                get(obj, "time"),
+                get(obj, "omega"),
+                get(obj, "errors"),
+                get(obj, "warnings"),
+                get(obj, "penalty"),
+                get(obj, "cost"),
+              ]
+
+            rows = [[
+              now,
+              repo_name,
+              branch_name,
+              winner,
+                drive_folder_url,
+              *row_for("baseline", base),
+              *row_for("human", human),
+              *row_for("dockai", dockai),
+            ]]
+
+              headers = [
+                "timestamp_utc",
+                "repo",
+                "branch",
+                "winner",
+                "drive_folder_url",
+                "baseline_status",
+                "baseline_size_mb",
+                "baseline_time_s",
+                "baseline_omega",
+                "baseline_errors",
+                "baseline_warnings",
+                "baseline_penalty",
+                "baseline_cost",
+                "human_status",
+                "human_size_mb",
+                "human_time_s",
+                "human_omega",
+                "human_errors",
+                "human_warnings",
+                "human_penalty",
+                "human_cost",
+                "dockai_status",
+                "dockai_size_mb",
+                "dockai_time_s",
+                "dockai_omega",
+                "dockai_errors",
+                "dockai_warnings",
+                "dockai_penalty",
+                "dockai_cost",
+              ]
+
+          scopes = [
+              "https://www.googleapis.com/auth/spreadsheets",
+              "https://www.googleapis.com/auth/drive.file",
+          ]
+          creds = Credentials.from_service_account_file("/tmp/sa.json", scopes=scopes)
+          client = gspread.authorize(creds)
+          sheet = client.open_by_key(sheet_id)
+          ws = sheet.worksheet(sheet_tab) if sheet_tab else sheet.sheet1
+
+            # Ensure header row exists
+            try:
+              first_row = ws.row_values(1)
+            except Exception:
+              first_row = []
+            if not any(first_row):
+              ws.insert_row(headers, 1)
+
+          ws.append_rows(rows, value_input_option="USER_ENTERED")
+          PY
+
+          python /tmp/update_sheet.py
+
+      - name: Upload Archive To Google Drive
+        if: always()
+        env:
+          REPO_NAME: ${{ steps.repo.outputs.repo_name }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rclone
+
+          # Configure rclone with service account JSON
+          echo "$GDRIVE_SERVICE_ACCOUNT_KEY" > /tmp/gdrive-sa.json
+          rclone config create gdrive drive scope=drive service_account_file=/tmp/gdrive-sa.json --non-interactive
+
+          # Upload archive into the specified Drive folder
+          rclone copy "research-data-${REPO_NAME}.tar.gz" gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --progress
