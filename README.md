@@ -18,7 +18,7 @@ $$C_{final}(M) = \underbrace{\left[ \sum_{i} W_i \cdot \hat{X}_i \right]}_{\text
 
 **Symbols:** $W_i$ are non-negative weights that sum to 1; $\hat{X}_i$ are the normalized, dimensionless metrics (size, time, security) for method $M$; $P_{quality}$ is the non-negative lint penalty derived from Hadolint findings.
 
-**Why multiplicative?** The performance term $\sum_i W_i \hat{X}_i$ is dimensionless and non-negative. Multiplying by $(1 + P_{quality})$ applies a non-negative scalar: when $P_{quality}=0$ the score is unchanged; $P_{quality}=0.05$ inflates the score by about 5%; larger lint debt scales proportionally. This preserves ordering induced by the performance term and avoids the additive case where a tiny performance score could be overwhelmed by a fixed offset. Formally, for any two methods A and B with the same $P_{quality}$, $\sum_i W_i \hat{X}_i^{(A)} < \sum_i W_i \hat{X}_i^{(B)} \implies C_{final}^{(A)} < C_{final}^{(B)}$.
+**Why multiplicative?** The performance term $\sum_i W_i \hat{X}_i$ is dimensionless and non-negative. Multiplying by $(1 + P_{quality})$ applies a non-negative scalar: when $P_{quality}=0$ the score is unchanged; $P_{quality}=0.05$ inflates the score by about 5%; larger lint debt scales proportionally. This preserves ordering induced by the performance term and avoids the additive case where a tiny performance score could be overwhelmed by a fixed offset. Formally, for any two methods A and B with the same $P_{quality}$, if $\sum_i W_i \hat{X}_i^{(A)} < \sum_i W_i \hat{X}_i^{(B)}$ then $C_{final}^{(A)} < C_{final}^{(B)}$.
 
 **Interpretation:**
 * **Lower is Better.**
@@ -74,7 +74,7 @@ $$P_{quality} = (0.1 \cdot N_{error}) + (0.05 \cdot N_{warning})$$
 
 * **Errors** (e.g., invalid syntax) incur a heavy penalty (+0.10 to the final score).
 * **Warnings** (e.g., style suggestions) incur a moderate penalty (+0.05).
-* The multiplicative form $C_{final} = (\sum_i W_i \hat{X}_i) \times (1 + P_{quality})$ keeps lint penalties proportional to the underlying performance score—penalties cannot swamp a near-zero performance score but still scale linearly with lint findings because $(1+P_{quality})$ acts as a scalar on the weighted sum.
+* The multiplicative form keeps lint penalties proportional to the underlying performance score—penalties cannot swamp a near-zero performance score but still scale linearly with lint findings because $(1+P_{quality})$ acts as a scalar on the weighted sum.
 * *Note:* Cloud Native Buildpacks do not produce a Dockerfile to lint; therefore, their $P_{quality}$ is defined as 0.
 
 ---
@@ -102,18 +102,22 @@ Let us calculate the score for a hypothetical **DockAI** run compared to a **CNB
 * **DockAI Linting:** 0 Errors, 2 Warnings.
 
 **2. Normalization Step**
-* $\hat{S}$ (Size Ratio) = $100 / 200 = \mathbf{0.5}$
-* $\hat{T}$ (Time Ratio) = $10 / 40 = \mathbf{0.25}$
-* $\hat{\Omega}$ (Security Ratio) = $50 / 500 = \mathbf{0.1}$
+* $\hat{S}$ (Size Ratio) = $100 / 200 = 0.5$
+* $\hat{T}$ (Time Ratio) = $10 / 40 = 0.25$
+* $\hat{\Omega}$ (Security Ratio) = $50 / 500 = 0.1$
 
 **3. Weighted Sum Calculation ($C_{total}$)**
+
 $$C_{total} = (0.3 \cdot 0.5) + (0.2 \cdot 0.25) + (0.5 \cdot 0.1)$$
-$$C_{total} = 0.15 + 0.05 + 0.05 = \mathbf{0.25}$$
+
+$$C_{total} = 0.15 + 0.05 + 0.05 = 0.25$$
 
 **4. Penalty Application ($P_{quality}$)**
-$$P_{quality} = (0.1 \cdot 0) + (0.05 \cdot 2) = \mathbf{0.10}$$
+
+$$P_{quality} = (0.1 \cdot 0) + (0.05 \cdot 2) = 0.10$$
 
 **5. Final Score ($C_{final}$)**
-$$C_{final} = 0.25 \times (1 + 0.10) = \mathbf{0.275}$$
 
-**Conclusion:** The DockAI method scored **0.275**. Since $0.275 < 1.0$, the AI model is significantly optimized compared to the industry standard, offering a 72.5% reduction in the composite cost.
+$$C_{final} = 0.25 \times (1 + 0.10) = 0.275$$
+
+**Conclusion:** The DockAI method scored 0.275. Since $0.275 < 1.0$, the AI model is significantly optimized compared to the industry standard, offering a 72.5% reduction in the composite cost.
