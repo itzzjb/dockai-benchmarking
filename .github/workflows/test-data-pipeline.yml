@@ -186,6 +186,45 @@ jobs:
                                       },
                                   },
                                   {
+                                      "repeatCell": {
+                                          "range": {
+                                              "sheetId": ws.id,
+                                              "startRowIndex": 1,
+                                              "endRowIndex": ws.row_count,
+                                              "startColumnIndex": 11,
+                                              "endColumnIndex": 12,
+                                          },
+                                          "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                                          "fields": "userEnteredFormat.textFormat.bold",
+                                      }
+                                  },
+                                  {
+                                      "repeatCell": {
+                                          "range": {
+                                              "sheetId": ws.id,
+                                              "startRowIndex": 1,
+                                              "endRowIndex": ws.row_count,
+                                              "startColumnIndex": 19,
+                                              "endColumnIndex": 20,
+                                          },
+                                          "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                                          "fields": "userEnteredFormat.textFormat.bold",
+                                      }
+                                  },
+                                  {
+                                      "repeatCell": {
+                                          "range": {
+                                              "sheetId": ws.id,
+                                              "startRowIndex": 1,
+                                              "endRowIndex": ws.row_count,
+                                              "startColumnIndex": 27,
+                                              "endColumnIndex": 28,
+                                          },
+                                          "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                                          "fields": "userEnteredFormat.textFormat.bold",
+                                      }
+                                  },
+                                  {
                                       "autoResizeDimensions": {
                                           "dimensions": {
                                               "sheetId": ws.id,
