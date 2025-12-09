@@ -109,9 +109,13 @@ jobs:
                           ws.format(header_range, {
                               "textFormat": {"bold": True},
                               "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95},
+                              "padding": {"top": 2, "bottom": 2, "left": 6, "right": 6},
                           })
 
-                          ws.format(data_range, {"textFormat": {"bold": False}})
+                          ws.format(data_range, {
+                              "textFormat": {"bold": False},
+                              "padding": {"top": 2, "bottom": 2, "left": 4, "right": 4},
+                          })
 
                           ws.freeze(rows=1)
                           ws.set_basic_filter(f"A1:{last_col_letter}{ws.row_count}")
