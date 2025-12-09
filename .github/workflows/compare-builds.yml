@@ -805,7 +805,7 @@ jobs:
               except Exception as exc:
                   print(f"Formatting skipped: {exc}", file=sys.stderr)
 
-          now = datetime.datetime.utcnow().isoformat() + "Z"
+          now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
           winner = get(data, "notes", "winner")
 
           base = get(data, "baseline", default={})
