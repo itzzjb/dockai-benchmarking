@@ -632,7 +632,6 @@ jobs:
           import json
           import os
           import sys
-          from datetime import timezone, timedelta
 
           import gspread
           from gspread.utils import rowcol_to_a1
@@ -806,8 +805,7 @@ jobs:
               except Exception as exc:
                   print(f"Formatting skipped: {exc}", file=sys.stderr)
 
-          sri_lanka_tz = timezone(timedelta(hours=5, minutes=30))
-          now = datetime.datetime.now(sri_lanka_tz).strftime("%Y-%m-%d %H:%M:%S")
+          now = datetime.datetime.utcnow().isoformat() + "Z"
           winner = get(data, "notes", "winner")
 
           base = get(data, "baseline", default={})
@@ -837,7 +835,7 @@ jobs:
           ]]
 
           headers = [
-              "timestamp_lk",
+              "timestamp_utc",
               "repo",
               "branch",
               "winner",
