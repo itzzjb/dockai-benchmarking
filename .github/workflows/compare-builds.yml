@@ -723,5 +723,11 @@ jobs:
           echo "$GDRIVE_SERVICE_ACCOUNT_KEY" > /tmp/gdrive-sa.json
           rclone config create gdrive drive scope=drive service_account_file=/tmp/gdrive-sa.json --non-interactive
 
-          # Upload archive into the specified Drive folder
-          rclone copy "research-data-${REPO_NAME}.tar.gz" gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --progress
+          # Preflight folder access
+          if ! rclone lsjson gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me > /tmp/gdrive-ls.json; then
+            echo "Cannot access Drive folder ID '$GDRIVE_FOLDER_ID'. Ensure the folder exists and is shared with this service account." >&2
+            exit 1
+          fi
+
+          # Upload archive into the specified Drive folder (supports shared drives)
+          rclone copy "research-data-${REPO_NAME}.tar.gz" gdrive: --drive-root-folder-id "$GDRIVE_FOLDER_ID" --drive-shared-with-me --progress
