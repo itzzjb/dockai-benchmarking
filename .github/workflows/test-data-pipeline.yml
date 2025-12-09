@@ -133,16 +133,6 @@ jobs:
                           ws.spreadsheet.batch_update({
                               "requests": [
                                   {
-                                      "autoResizeDimensions": {
-                                          "dimensions": {
-                                              "sheetId": ws.id,
-                                              "dimension": "COLUMNS",
-                                              "startIndex": 0,
-                                              "endIndex": len(headers),
-                                          }
-                                      }
-                                  },
-                                  {
                                       "addConditionalFormatRule": {
                                           "rule": {
                                               "ranges": [{
@@ -165,6 +155,16 @@ jobs:
                                           },
                                       },
                                   },
+                                  {
+                                      "autoResizeDimensions": {
+                                          "dimensions": {
+                                              "sheetId": ws.id,
+                                              "dimension": "COLUMNS",
+                                              "startIndex": 0,
+                                              "endIndex": len(headers),
+                                          }
+                                      }
+                                  }
                               ]
                           })
                       except Exception as exc:
