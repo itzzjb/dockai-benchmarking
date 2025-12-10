@@ -1,4 +1,4 @@
 {
-  "repository_url": "https://github.com/docker/getting-started",
+  "repository_url": "https://github.com/docker/getting-started-todo-app",
   "description": "Configuration file for dockai GitHub Action testing. Replace repository_url with the actual repository you want to generate a Dockerfile for."
 }
