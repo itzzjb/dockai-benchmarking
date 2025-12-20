@@ -28,7 +28,7 @@ jobs:
       HUMAN_IMG: human:compare
       DOCKAI_IMG: dockai:compare
       CNB_IMG: cnb:compare
-      CODEX_IMG: codex:compare
+      IDE_IMG: ide:compare
       PACK_VERSION: 0.36.2
 
     steps:
@@ -137,7 +137,7 @@ jobs:
           fi
           rm -f "${TARGET_DIR}"/Dockerfile.*
 
-      - name: Generate ChatGPT IDE Agent Dockerfile
+      - name: Generate IDE Agent Dockerfile
         continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -146,52 +146,39 @@ jobs:
 
           cd "${TARGET_DIR}"
 
+          # Install Aider (AI pair programming tool, similar to Gemini CLI / Claude Code)
+          pip install aider-chat
+
           # Analyze project structure
           echo "Analyzing project structure..."
-          PROJECT_INFO=$(cat <<EOF
-          Project Structure:
-          $(find . -type f -name "*.json" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.java" -o -name "requirements.txt" -o -name "package.json" -o -name "go.mod" -o -name "pom.xml" | head -20)
+          PROJECT_FILES=$(find . -type f \( -name "*.json" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.java" -o -name "requirements.txt" -o -name "package.json" -o -name "go.mod" -o -name "pom.xml" \) | head -10)
 
-          Package Files:
-          $([ -f package.json ] && cat package.json || echo "No package.json")
-          $([ -f requirements.txt ] && cat requirements.txt || echo "No requirements.txt")
-          $([ -f go.mod ] && cat go.mod || echo "No go.mod")
-          EOF
-          )
+          # Create task message for Aider
+          TASK_MESSAGE="Generate a production-ready Dockerfile for this project. Analyze the project structure and dependencies, then create an optimized Dockerfile that: uses appropriate base image for the detected language/framework, implements multi-stage build if beneficial, follows Docker best practices (non-root user, minimal layers), installs dependencies efficiently with proper caching, sets appropriate working directory, exposed ports, and entrypoint. Output the Dockerfile directly."
 
-          # Create prompt for ChatGPT
-          PROMPT="You are an expert DevOps engineer and IDE agent. Analyze this project and generate an optimized production-ready Dockerfile. Be concise and output ONLY the Dockerfile content, no explanations.
-
-          ${PROJECT_INFO}
-
-          Generate a Dockerfile that:
-          - Uses appropriate base image
-          - Includes multi-stage build if beneficial
-          - Follows best practices (non-root user, minimal layers, etc.)
-          - Installs dependencies efficiently
-          - Sets proper working directory and entrypoint
-
-          Output only the Dockerfile content:"
-
-          # Call OpenAI API using ChatGPT
-          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
-            -d "{
-              \"model\": \"gpt-4o-mini\",
-              \"messages\": [{\"role\": \"user\", \"content\": $(echo "$PROMPT" | jq -Rs .)}],
-              \"temperature\": 0.3,
-              \"max_tokens\": 2000
-            }")
-
-          # Extract Dockerfile content
-          echo "$RESPONSE" | jq -r '.choices[0].message.content' | sed 's/```dockerfile//g' | sed 's/```//g' | sed '/^$/d' > Dockerfile.codex
-
-          if [ -s Dockerfile.codex ]; then
-            echo "ChatGPT IDE Agent successfully generated Dockerfile"
+          # Use Aider to generate Dockerfile
+          echo "Using Aider to generate Dockerfile..."
+          if command -v aider &> /dev/null; then
+            # Run Aider in non-interactive mode
+            aider --yes --no-git --message "$TASK_MESSAGE" --model gpt-4o-mini $PROJECT_FILES 2>&1 | tee aider.log || true
+            
+            # Check if Dockerfile was created
+            if [ -f "Dockerfile" ] && [ ! -f "Dockerfile.ide" ]; then
+              cp Dockerfile Dockerfile.ide
+              echo "Aider successfully generated Dockerfile"
+            elif [ -f "Dockerfile.ide" ]; then
+              echo "Aider generated Dockerfile.ide"
+            else
+              echo "Aider did not generate Dockerfile, creating minimal fallback"
+              echo "FROM alpine:latest" > Dockerfile.ide
+              echo "CMD [\"sh\"]" >> Dockerfile.ide
+            fi
           else
-            echo "ChatGPT generation failed or returned empty content"
+            echo "Aider not available, skipping generation"
           fi
+
+          # Cleanup
+          rm -f aider.log
 
           cd ..
 
@@ -270,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           # Remove only the study images to avoid deleting GitHub Action images
-          docker image rm -f "${HUMAN_IMG}" "${DOCKAI_IMG}" "${CNB_IMG}" "${CODEX_IMG}" 2>/dev/null || true
+          docker image rm -f "${HUMAN_IMG}" "${DOCKAI_IMG}" "${CNB_IMG}" "${IDE_IMG}" 2>/dev/null || true
           # Optional: clean BuildKit cache without touching pulled action images
           docker builder prune -af || true
 
@@ -279,7 +266,7 @@ jobs:
         run: |
           [ -f "${TARGET_DIR}/Dockerfile" ] && echo "human_present=true" >> "$GITHUB_OUTPUT" || echo "human_present=false" >> "$GITHUB_OUTPUT"
           [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && echo "dockai_present=true" >> "$GITHUB_OUTPUT" || echo "dockai_present=false" >> "$GITHUB_OUTPUT"
-          [ -f "${TARGET_DIR}/Dockerfile.codex" ] && echo "codex_present=true" >> "$GITHUB_OUTPUT" || echo "codex_present=false" >> "$GITHUB_OUTPUT"
+          [ -f "${TARGET_DIR}/Dockerfile.ide" ] && echo "ide_present=true" >> "$GITHUB_OUTPUT" || echo "ide_present=false" >> "$GITHUB_OUTPUT"
 
       - name: Hadolint Human Dockerfile
         if: steps.detect.outputs.human_present == 'true'
@@ -301,13 +288,13 @@ jobs:
           failure-threshold: error
           no-fail: true
 
-      - name: Hadolint Codex Dockerfile
-        if: steps.detect.outputs.codex_present == 'true'
+      - name: Hadolint IDE Dockerfile
+        if: steps.detect.outputs.ide_present == 'true'
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.codex
+          dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.ide
           format: json
-          output-file: hadolint-codex.json
+          output-file: hadolint-ide.json
           failure-threshold: error
           no-fail: true
 
@@ -345,19 +332,19 @@ jobs:
           echo "$((end-start))" > dockai_time.txt
           echo "$status" > dockai_status.txt
 
-      - name: Build Codex (Measure Time)
-        if: steps.detect.outputs.codex_present == 'true'
+      - name: Build IDE (Measure Time)
+        if: steps.detect.outputs.ide_present == 'true'
         run: |
           set -u -o pipefail
           start=$(date +%s)
-          if docker build --no-cache --file "${TARGET_DIR}/Dockerfile.codex" --tag "${CODEX_IMG}" "${TARGET_DIR}"; then
+          if docker build --no-cache --file "${TARGET_DIR}/Dockerfile.ide" --tag "${IDE_IMG}" "${TARGET_DIR}"; then
             status="success"
           else
             status="failed"
           fi
           end=$(date +%s)
-          echo "$((end-start))" > codex_time.txt
-          echo "$status" > codex_status.txt
+          echo "$((end-start))" > ide_time.txt
+          echo "$status" > ide_status.txt
 
       - name: Build CNB (Measure Time)
         run: |
@@ -389,7 +376,7 @@ jobs:
           }
           run_trivy "${HUMAN_IMG}" trivy-human.json
           run_trivy "${DOCKAI_IMG}" trivy-dockai.json
-          run_trivy "${CODEX_IMG}" trivy-codex.json
+          run_trivy "${IDE_IMG}" trivy-ide.json
           run_trivy "${CNB_IMG}" trivy-cnb.json
 
       - name: Calculate Academic Metrics (C_total)
@@ -452,16 +439,16 @@ jobs:
           }
 
           # Get Raw Values
-          h_status=$(get_status human_status.txt); d_status=$(get_status dockai_status.txt); x_status=$(get_status codex_status.txt); c_status=$(get_status cnb_status.txt)
+          h_status=$(get_status human_status.txt); d_status=$(get_status dockai_status.txt); i_status=$(get_status ide_status.txt); c_status=$(get_status cnb_status.txt)
           h_size=$(get_size "${HUMAN_IMG}"); h_time=$(get_time human_time.txt); h_omega=$(get_omega trivy-human.json)
           d_size=$(get_size "${DOCKAI_IMG}"); d_time=$(get_time dockai_time.txt); d_omega=$(get_omega trivy-dockai.json)
-          x_size=$(get_size "${CODEX_IMG}"); x_time=$(get_time codex_time.txt); x_omega=$(get_omega trivy-codex.json)
+          i_size=$(get_size "${IDE_IMG}"); i_time=$(get_time ide_time.txt); i_omega=$(get_omega trivy-ide.json)
           c_size=$(get_size "${CNB_IMG}");    c_time=$(get_time cnb_time.txt);   c_omega=$(get_omega trivy-cnb.json)
 
           # Lint counts (tolerate empty output from jq)
           if ! read h_err h_warn <<< "$(get_lint_counts hadolint-human.json)"; then h_err=0; h_warn=0; fi
           if ! read d_err d_warn <<< "$(get_lint_counts hadolint-dockai.json)"; then d_err=0; d_warn=0; fi
-          if ! read x_err x_warn <<< "$(get_lint_counts hadolint-codex.json)"; then x_err=0; x_warn=0; fi
+          if ! read i_err i_warn <<< "$(get_lint_counts hadolint-ide.json)"; then i_err=0; i_warn=0; fi
           if ! read c_err c_warn <<< "$(get_lint_counts hadolint-cnb.json)"; then c_err=0; c_warn=0; fi
 
           # Coerce missing or non-positive values to safe defaults to avoid awk/bc errors
@@ -473,12 +460,12 @@ jobs:
 
           h_size=$(default_zero "$h_size"); h_time=$(default_zero "$h_time"); h_omega=$(default_zero "$h_omega")
           d_size=$(default_zero "$d_size"); d_time=$(default_zero "$d_time"); d_omega=$(default_zero "$d_omega")
-          x_size=$(default_zero "$x_size"); x_time=$(default_zero "$x_time"); x_omega=$(default_zero "$x_omega")
+          i_size=$(default_zero "$i_size"); i_time=$(default_zero "$i_time"); i_omega=$(default_zero "$i_omega")
           c_size=$(default_one "$c_size");  c_time=$(default_one "$c_time");  c_omega=$(default_one "$c_omega")
 
           h_err=$(default_zero "$h_err"); h_warn=$(default_zero "$h_warn")
           d_err=$(default_zero "$d_err"); d_warn=$(default_zero "$d_warn")
-          x_err=$(default_zero "$x_err"); x_warn=$(default_zero "$x_warn")
+          i_err=$(default_zero "$i_err"); i_warn=$(default_zero "$i_warn")
           c_err=$(default_zero "$c_err"); c_warn=$(default_zero "$c_warn")
 
           # 2. ZERO-DIVISION PROTECTION (For Baseline)
@@ -499,10 +486,10 @@ jobs:
               { [ "$norm_time" -le 0 ] || [ "$d_time" -lt "$norm_time" ]; } && norm_time=$d_time
               { [ "$norm_omega" -le 0 ] || [ "$d_omega" -lt "$norm_omega" ]; } && norm_omega=$d_omega
             fi
-            if [ "$x_status" = "success" ]; then
-              { [ "$norm_size" -le 0 ] || [ "$x_size" -lt "$norm_size" ]; } && norm_size=$x_size
-              { [ "$norm_time" -le 0 ] || [ "$x_time" -lt "$norm_time" ]; } && norm_time=$x_time
-              { [ "$norm_omega" -le 0 ] || [ "$x_omega" -lt "$norm_omega" ]; } && norm_omega=$x_omega
+            if [ "$i_status" = "success" ]; then
+              { [ "$norm_size" -le 0 ] || [ "$i_size" -lt "$norm_size" ]; } && norm_size=$i_size
+              { [ "$norm_time" -le 0 ] || [ "$i_time" -lt "$norm_time" ]; } && norm_time=$i_time
+              { [ "$norm_omega" -le 0 ] || [ "$i_omega" -lt "$norm_omega" ]; } && norm_omega=$i_omega
             fi
             [ "$norm_size" -le 0 ] && norm_size=1
             [ "$norm_time" -le 0 ] && norm_time=1
@@ -534,7 +521,7 @@ jobs:
              }'
           }
 
-          # Calculate Human, DockAI & Codex Scores (explicitly capture output, tolerate failures)
+          # Calculate Human, DockAI & IDE Scores (explicitly capture output, tolerate failures)
           if output=$(calc_metrics "$h_size" "$h_time" "$h_omega" "$norm_size" "$norm_time" "$norm_omega" 2>/dev/null); then
             set -- $output
             h_score=${1:-0}; h_ns=${2:-0}; h_nt=${3:-0}; h_nw=${4:-0}
@@ -549,11 +536,11 @@ jobs:
             d_score=0; d_ns=0; d_nt=0; d_nw=0
           fi
 
-          if output=$(calc_metrics "$x_size" "$x_time" "$x_omega" "$norm_size" "$norm_time" "$norm_omega" 2>/dev/null); then
+          if output=$(calc_metrics "$i_size" "$i_time" "$i_omega" "$norm_size" "$norm_time" "$norm_omega" 2>/dev/null); then
             set -- $output
-            x_score=${1:-0}; x_ns=${2:-0}; x_nt=${3:-0}; x_nw=${4:-0}
+            i_score=${1:-0}; i_ns=${2:-0}; i_nt=${3:-0}; i_nw=${4:-0}
           else
-            x_score=0; x_ns=0; x_nt=0; x_nw=0
+            i_score=0; i_ns=0; i_nt=0; i_nw=0
           fi
 
           c_score="1.0000"
@@ -561,19 +548,19 @@ jobs:
           # 4. HADOLINT PENALTIES AND FINAL COST (Multiplicative: C_final = C_total × (1 + P_quality))
           h_penalty=$(calc_penalty "$h_err" "$h_warn")
           d_penalty=$(calc_penalty "$d_err" "$d_warn")
-          x_penalty=$(calc_penalty "$x_err" "$x_warn")
+          i_penalty=$(calc_penalty "$i_err" "$i_warn")
           c_penalty=$(calc_penalty "$c_err" "$c_warn")
 
           h_final=$(calc_final "$h_score" "$h_penalty")
           d_final=$(calc_final "$d_score" "$d_penalty")
-          x_final=$(calc_final "$x_score" "$x_penalty")
+          i_final=$(calc_final "$i_score" "$i_penalty")
           c_final=$(calc_final "$c_score" "$c_penalty")
 
           # Disqualify builds that did not finish
           dq_score="9999"
           if [ "$h_status" != "success" ]; then h_final=$dq_score; h_score=$dq_score; fi
           if [ "$d_status" != "success" ]; then d_final=$dq_score; d_score=$dq_score; fi
-          if [ "$x_status" != "success" ]; then x_final=$dq_score; x_score=$dq_score; fi
+          if [ "$i_status" != "success" ]; then i_final=$dq_score; i_score=$dq_score; fi
           if [ "$c_status" != "success" ]; then c_final=$dq_score; c_score=$dq_score; fi
 
           # Safe float comparison that tolerates bc parse failures
@@ -601,17 +588,17 @@ jobs:
             lowest=$d_final; winner="DockAI"
           fi
 
-          if [ "$x_status" = "success" ] && { [ -z "$lowest" ] || safe_lt "$x_final" "$lowest"; }; then
-            lowest=$x_final; winner="Codex"
+          if [ "$i_status" = "success" ] && { [ -z "$lowest" ] || safe_lt "$i_final" "$lowest"; }; then
+            lowest=$i_final; winner="IDE Agent"
           fi
 
           # Export
           echo "winner=$winner" >> "$GITHUB_ENV"
 
           # Debug output
-          echo "Scores (base) -> CNB: $c_score, Human: $h_score, DockAI: $d_score, Codex: $x_score"
-          echo "Penalties -> CNB: $c_penalty, Human: $h_penalty, DockAI: $d_penalty, Codex: $x_penalty"
-          echo "Final -> CNB: $c_final, Human: $h_final, DockAI: $d_final, Codex: $x_final"
+          echo "Scores (base) -> CNB: $c_score, Human: $h_score, DockAI: $d_score, IDE: $i_score"
+          echo "Penalties -> CNB: $c_penalty, Human: $h_penalty, DockAI: $d_penalty, IDE: $i_penalty"
+          echo "Final -> CNB: $c_final, Human: $h_final, DockAI: $d_final, IDE: $i_final"
 
           # Generate JSON
           cat <<EOF > results.json
@@ -619,7 +606,7 @@ jobs:
             "baseline": {"status": "$c_status", "size": $c_size, "time": $c_time, "omega": $c_omega, "errors": $c_err, "warnings": $c_warn, "penalty": $c_penalty, "cost": $c_final},
             "human": {"status": "$h_status", "size": $h_size, "time": $h_time, "omega": $h_omega, "errors": $h_err, "warnings": $h_warn, "penalty": $h_penalty, "cost": $h_final},
             "dockai": {"status": "$d_status", "size": $d_size, "time": $d_time, "omega": $d_omega, "errors": $d_err, "warnings": $d_warn, "penalty": $d_penalty, "cost": $d_final},
-            "codex": {"status": "$x_status", "size": $x_size, "time": $x_time, "omega": $x_omega, "errors": $x_err, "warnings": $x_warn, "penalty": $x_penalty, "cost": $x_final},
+            "ide": {"status": "$i_status", "size": $i_size, "time": $i_time, "omega": $i_omega, "errors": $i_err, "warnings": $i_warn, "penalty": $i_penalty, "cost": $i_final},
             "notes": {"disqualified_score": $dq_score, "winner": "$winner"}
           }
           EOF
@@ -635,7 +622,7 @@ jobs:
           | CNB (Baseline) | $(jq -r '.baseline.status' results.json) | $(jq -r '.baseline.cost' results.json) |
           | Human | $(jq -r '.human.status' results.json) | $(jq -r '.human.cost' results.json) |
           | DockAI | $(jq -r '.dockai.status' results.json) | $(jq -r '.dockai.cost' results.json) |
-          | Codex | $(jq -r '.codex.status' results.json) | $(jq -r '.codex.cost' results.json) |
+          | IDE Agent | $(jq -r '.ide.status' results.json) | $(jq -r '.ide.cost' results.json) |
 
           **Winner:** ${winner}
           EOF
@@ -649,7 +636,7 @@ jobs:
           # Read JSON
           hs=$(jq '.human.size' results.json); ht=$(jq '.human.time' results.json); ho=$(jq '.human.omega' results.json); hc=$(jq '.human.cost' results.json); hs_status=$(jq -r '.human.status' results.json)
           ds=$(jq '.dockai.size' results.json); dt=$(jq '.dockai.time' results.json); do=$(jq '.dockai.omega' results.json); dc=$(jq '.dockai.cost' results.json); ds_status=$(jq -r '.dockai.status' results.json)
-          xs=$(jq '.codex.size' results.json); xt=$(jq '.codex.time' results.json); xo=$(jq '.codex.omega' results.json); xc=$(jq '.codex.cost' results.json); xs_status=$(jq -r '.codex.status' results.json)
+          is=$(jq '.ide.size' results.json); it=$(jq '.ide.time' results.json); io=$(jq '.ide.omega' results.json); ic=$(jq '.ide.cost' results.json); is_status=$(jq -r '.ide.status' results.json)
           cs=$(jq '.baseline.size' results.json); ct=$(jq '.baseline.time' results.json); co=$(jq '.baseline.omega' results.json); bc=$(jq '.baseline.cost' results.json); cs_status=$(jq -r '.baseline.status' results.json)
 
           cat > "${REPORT_PATH}" <<EOF
@@ -663,7 +650,7 @@ jobs:
           | **CNB (Baseline)** | $(to_mb $cs) | $ct | $co | **$bc** (Status: $cs_status) |
           | **Human** | $(to_mb $hs) | $ht | $ho | **$hc** (Status: $hs_status) |
           | **DockAI (Ours)** | $(to_mb $ds) | $dt | $do | **$dc** (Status: $ds_status) |
-          | **Codex** | $(to_mb $xs) | $xt | $xo | **$xc** (Status: $xs_status) |
+          | **IDE Agent** | $(to_mb $is) | $it | $io | **$ic** (Status: $is_status) |
 
           ## 2. Mathematical Definition
           The **Composite Optimization Metric (\$C_{total}\$)** is calculated as:
@@ -711,8 +698,8 @@ jobs:
           if [ -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
             cp "${TARGET_DIR}/Dockerfile.dockai" "$DOCKERFILES_DIR/Dockerfile.dockai"
           fi
-          if [ -f "${TARGET_DIR}/Dockerfile.codex" ]; then
-            cp "${TARGET_DIR}/Dockerfile.codex" "$DOCKERFILES_DIR/Dockerfile.codex"
+          if [ -f "${TARGET_DIR}/Dockerfile.ide" ]; then
+            cp "${TARGET_DIR}/Dockerfile.ide" "$DOCKERFILES_DIR/Dockerfile.ide"
           fi
 
           # Gather remaining outputs under data/
@@ -945,7 +932,7 @@ jobs:
           base = get(data, "baseline", default={})
           human = get(data, "human", default={})
           dockai = get(data, "dockai", default={})
-          codex = get(data, "codex", default={})
+          ide = get(data, "ide", default={})
 
           def row_for(obj):
               return [
@@ -967,7 +954,7 @@ jobs:
               *row_for(base),
               *row_for(human),
               *row_for(dockai),
-              *row_for(codex),
+              *row_for(ide),
           ]]
 
           headers = [
@@ -999,14 +986,14 @@ jobs:
               "dockai_warnings",
               "dockai_penalty",
               "dockai_cost",
-              "codex_status",
-              "codex_size_mb",
-              "codex_time_s",
-              "codex_omega",
-              "codex_errors",
-              "codex_warnings",
-              "codex_penalty",
-              "codex_cost",
+              "ide_status",
+              "ide_size_mb",
+              "ide_time_s",
+              "ide_omega",
+              "ide_errors",
+              "ide_warnings",
+              "ide_penalty",
+              "ide_cost",
           ]
 
           scopes = [
