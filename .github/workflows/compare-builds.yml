@@ -137,18 +137,62 @@ jobs:
           fi
           rm -f "${TARGET_DIR}"/Dockerfile.*
 
-      - name: Generate Codex CLI Dockerfile
+      - name: Generate ChatGPT IDE Agent Dockerfile
         continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          npm install -g @codexai/cli || true
 
           cd "${TARGET_DIR}"
-          if command -v codex &> /dev/null; then
-            codex dockerfile generate --output Dockerfile.codex || echo "Codex generation failed"
+
+          # Analyze project structure
+          echo "Analyzing project structure..."
+          PROJECT_INFO=$(cat <<EOF
+          Project Structure:
+          $(find . -type f -name "*.json" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.java" -o -name "requirements.txt" -o -name "package.json" -o -name "go.mod" -o -name "pom.xml" | head -20)
+
+          Package Files:
+          $([ -f package.json ] && cat package.json || echo "No package.json")
+          $([ -f requirements.txt ] && cat requirements.txt || echo "No requirements.txt")
+          $([ -f go.mod ] && cat go.mod || echo "No go.mod")
+          EOF
+          )
+
+          # Create prompt for ChatGPT
+          PROMPT="You are an expert DevOps engineer and IDE agent. Analyze this project and generate an optimized production-ready Dockerfile. Be concise and output ONLY the Dockerfile content, no explanations.
+
+          ${PROJECT_INFO}
+
+          Generate a Dockerfile that:
+          - Uses appropriate base image
+          - Includes multi-stage build if beneficial
+          - Follows best practices (non-root user, minimal layers, etc.)
+          - Installs dependencies efficiently
+          - Sets proper working directory and entrypoint
+
+          Output only the Dockerfile content:"
+
+          # Call OpenAI API using ChatGPT
+          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+            -d "{
+              \"model\": \"gpt-4o-mini\",
+              \"messages\": [{\"role\": \"user\", \"content\": $(echo "$PROMPT" | jq -Rs .)}],
+              \"temperature\": 0.3,
+              \"max_tokens\": 2000
+            }")
+
+          # Extract Dockerfile content
+          echo "$RESPONSE" | jq -r '.choices[0].message.content' | sed 's/```dockerfile//g' | sed 's/```//g' | sed '/^$/d' > Dockerfile.codex
+
+          if [ -s Dockerfile.codex ]; then
+            echo "ChatGPT IDE Agent successfully generated Dockerfile"
           else
-            echo "Codex CLI not available, skipping generation"
+            echo "ChatGPT generation failed or returned empty content"
           fi
+
           cd ..
 
       - name: Set up Docker Buildx (for DockAI)
