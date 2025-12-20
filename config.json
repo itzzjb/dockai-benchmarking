@@ -1,5 +1,5 @@
 {
-  "repository_url": "docker/getting-started-todo-app",
+  "repository_url": "docker/getting-started",
   "weights": {
     "size": 0.3,
     "time": 0.2,
