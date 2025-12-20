@@ -151,34 +151,52 @@ jobs:
 
           # Analyze project structure
           echo "Analyzing project structure..."
-          PROJECT_FILES=$(find . -type f \( -name "*.json" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.java" -o -name "requirements.txt" -o -name "package.json" -o -name "go.mod" -o -name "pom.xml" \) | head -10)
 
-          # Create task message for Aider
-          TASK_MESSAGE="Generate a production-ready Dockerfile for this project. Analyze the project structure and dependencies, then create an optimized Dockerfile that: uses appropriate base image for the detected language/framework, implements multi-stage build if beneficial, follows Docker best practices (non-root user, minimal layers), installs dependencies efficiently with proper caching, sets appropriate working directory, exposed ports, and entrypoint. Output the Dockerfile directly."
+          # Create a placeholder Dockerfile for Aider to edit (IDE agents need a target file)
+          touch Dockerfile.ide
 
-          # Use Aider to generate Dockerfile
-          echo "Using Aider to generate Dockerfile..."
+          # Get relevant project files for context (comprehensive language support)
+          PROJECT_FILES=$(find . -maxdepth 2 -type f \( \
+            -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" -o \
+            -name "*.py" -o -name "*.java" -o -name "*.go" -o -name "*.rs" -o \
+            -name "*.rb" -o -name "*.php" -o -name "*.c" -o -name "*.cpp" -o -name "*.h" -o \
+            -name "*.cs" -o -name "*.kt" -o -name "*.scala" -o -name "*.swift" -o \
+            -name "*.ex" -o -name "*.exs" -o -name "*.clj" -o \
+            -name "package.json" -o -name "tsconfig.json" -o -name "requirements.txt" -o \
+            -name "Gemfile" -o -name "composer.json" -o -name "Cargo.toml" -o \
+            -name "go.mod" -o -name "pom.xml" -o -name "build.gradle" -o -name "build.gradle.kts" -o \
+            -name "build.sbt" -o -name "Package.swift" -o -name "mix.exs" -o -name "project.clj" -o \
+            -name "*.csproj" -o -name "CMakeLists.txt" -o -name "Makefile" -o \
+            -name "docker-compose.yml" -o -name "docker-compose.yaml" \
+          \) 2>/dev/null | head -15 | tr '\n' ' ')
+
+          # Use Aider to generate Dockerfile (works like an IDE agent)
+          echo "Using Aider IDE agent to generate Dockerfile..."
           if command -v aider &> /dev/null; then
-            # Run Aider in non-interactive mode
-            aider --yes --no-git --message "$TASK_MESSAGE" --model gpt-4o-mini $PROJECT_FILES 2>&1 | tee aider.log || true
+            # Run Aider with Dockerfile.ide as target and project files as context
+            aider --yes --no-git --model gpt-4o-mini \
+              --message "Create a production-ready Dockerfile in Dockerfile.ide. Analyze the project files to determine language, framework, and dependencies. Include multi-stage build if beneficial, use best practices (non-root user, minimal layers), efficient dependency installation, proper working directory and entrypoint." \
+              Dockerfile.ide $PROJECT_FILES 2>&1 | tee aider.log || true
             
-            # Check if Dockerfile was created
-            if [ -f "Dockerfile" ] && [ ! -f "Dockerfile.ide" ]; then
-              cp Dockerfile Dockerfile.ide
-              echo "Aider successfully generated Dockerfile"
-            elif [ -f "Dockerfile.ide" ]; then
-              echo "Aider generated Dockerfile.ide"
+            # Verify generation
+            if [ -s Dockerfile.ide ]; then
+              echo "Aider IDE agent successfully generated Dockerfile"
+              head -n 5 Dockerfile.ide
             else
-              echo "Aider did not generate Dockerfile, creating minimal fallback"
+              echo "Aider generation failed, creating fallback"
               echo "FROM alpine:latest" > Dockerfile.ide
-              echo "CMD [\"sh\"]" >> Dockerfile.ide
+              echo "WORKDIR /app" >> Dockerfile.ide
+              echo "COPY . ." >> Dockerfile.ide
+              echo 'CMD ["sh"]' >> Dockerfile.ide
             fi
           else
             echo "Aider not available, skipping generation"
+            echo "FROM alpine:latest" > Dockerfile.ide
+            echo 'CMD ["sh"]' >> Dockerfile.ide
           fi
 
           # Cleanup
-          rm -f aider.log
+          rm -f aider.log .aider*
 
           cd ..
 
