@@ -75,18 +75,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          input_repo="${{ github.event.inputs.repo_url }}"
-          input_branch="${{ github.event.inputs.branch }}"
 
-          # Fallback to config.json if input is empty
-          # (Ensure config.json exists or ignore errors if it doesn't)
+          # Read from config.json
           if [ -f config.json ]; then
             config_repo=$(jq -r '.repository_url // empty' config.json)
           else
             config_repo=""
           fi
 
-          raw_repo="${input_repo:-$config_repo}"
+          raw_repo="$config_repo"
 
           if [ -z "$raw_repo" ]; then echo "Repo URL required" >&2; exit 1; fi
 
@@ -408,12 +405,15 @@ jobs:
       - name: Calculate Academic Metrics (C_total)
         if: always()
         id: math
-        env:
-          W_SIZE: 0.3
-          W_TIME: 0.2
-          W_SEC: 0.5
         run: |
           set -e
+
+          # Read weights from config.json (with defaults)
+          W_SIZE=$(jq -r '.weights.size // 0.3' config.json)
+          W_TIME=$(jq -r '.weights.time // 0.2' config.json)
+          W_SEC=$(jq -r '.weights.security // 0.5' config.json)
+
+          echo "Using weights - Size: $W_SIZE, Time: $W_TIME, Security: $W_SEC"
 
           # 1. ROBUST METRIC EXTRACTION
           get_status() { [ -f "$1" ] && cat "$1" || echo "missing"; }
