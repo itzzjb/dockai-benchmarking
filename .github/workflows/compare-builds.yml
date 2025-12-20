@@ -146,66 +146,74 @@ jobs:
 
           cd "${TARGET_DIR}"
 
-          # Install Aider (AI pair programming tool, similar to Gemini CLI / Claude Code)
-          pip install aider-chat
+          echo "Simulating IDE Copilot/Gemini CLI/Claude Code experience..."
 
-          # Analyze project structure
-          echo "Analyzing project structure..."
+          # Gather project context (what the IDE would see)
+          echo "Analyzing project files..."
 
-          # Create a placeholder Dockerfile for Aider to edit (IDE agents need a target file)
-          touch Dockerfile.ide
+          # Get directory structure
+          TREE_OUTPUT=$(find . -maxdepth 3 -type f ! -path "*/\.*" ! -path "*/node_modules/*" ! -path "*/vendor/*" | head -30)
 
-          # Get relevant project files for context (comprehensive language support)
-          PROJECT_FILES=$(find . -maxdepth 2 -type f \( \
-            -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" -o \
-            -name "*.py" -o -name "*.java" -o -name "*.go" -o -name "*.rs" -o \
-            -name "*.rb" -o -name "*.php" -o -name "*.c" -o -name "*.cpp" -o -name "*.h" -o \
-            -name "*.cs" -o -name "*.kt" -o -name "*.scala" -o -name "*.swift" -o \
-            -name "*.ex" -o -name "*.exs" -o -name "*.clj" -o \
-            -name "package.json" -o -name "tsconfig.json" -o -name "requirements.txt" -o \
-            -name "Gemfile" -o -name "composer.json" -o -name "Cargo.toml" -o \
-            -name "go.mod" -o -name "pom.xml" -o -name "build.gradle" -o -name "build.gradle.kts" -o \
-            -name "build.sbt" -o -name "Package.swift" -o -name "mix.exs" -o -name "project.clj" -o \
-            -name "*.csproj" -o -name "CMakeLists.txt" -o -name "Makefile" -o \
-            -name "docker-compose.yml" -o -name "docker-compose.yaml" \
-          \) 2>/dev/null | head -15 | tr '\n' ' ')
+          # Get key configuration files
+          PACKAGE_JSON=$([ -f package.json ] && cat package.json 2>/dev/null | head -50 || echo "")
+          REQUIREMENTS=$([ -f requirements.txt ] && cat requirements.txt 2>/dev/null || echo "")
+          GO_MOD=$([ -f go.mod ] && cat go.mod 2>/dev/null || echo "")
+          POM_XML=$([ -f pom.xml ] && cat pom.xml 2>/dev/null | head -30 || echo "")
+          GEMFILE=$([ -f Gemfile ] && cat Gemfile 2>/dev/null || echo "")
+          CARGO=$([ -f Cargo.toml ] && cat Cargo.toml 2>/dev/null || echo "")
 
-          # Use Aider to generate Dockerfile (works like an IDE agent)
-          echo "Using Aider IDE agent to generate Dockerfile..."
-          if command -v aider &> /dev/null; then
-            # Run Aider with Dockerfile.ide as target and project files as context
-            aider --yes --no-git --model gpt-4o-mini \
-              --message "Create a production-ready Dockerfile in Dockerfile.ide. Analyze the project files to determine language, framework, and dependencies. Include multi-stage build if beneficial, use best practices (non-root user, minimal layers), efficient dependency installation, proper working directory and entrypoint." \
-              Dockerfile.ide $PROJECT_FILES 2>&1 | tee aider.log || true
-            
-            # Verify generation
-            if [ -s Dockerfile.ide ]; then
-              echo "Aider IDE agent successfully generated Dockerfile"
-              head -n 5 Dockerfile.ide
-            else
-              echo "Aider generation failed, creating fallback"
-              echo "FROM alpine:latest" > Dockerfile.ide
-              echo "WORKDIR /app" >> Dockerfile.ide
-              echo "COPY . ." >> Dockerfile.ide
-              echo 'CMD ["sh"]' >> Dockerfile.ide
-            fi
+          # Detect main language/framework
+          if [ -f package.json ]; then DETECTED="Node.js/JavaScript"
+          elif [ -f requirements.txt ] || [ -f setup.py ]; then DETECTED="Python"
+          elif [ -f go.mod ]; then DETECTED="Go"
+          elif [ -f pom.xml ] || [ -f build.gradle ]; then DETECTED="Java"
+          elif [ -f Gemfile ]; then DETECTED="Ruby"
+          elif [ -f Cargo.toml ]; then DETECTED="Rust"
+          elif [ -f composer.json ]; then DETECTED="PHP"
+          else DETECTED="Unknown"
+          fi
+
+          echo "Detected: $DETECTED"
+
+          # Create the prompt (simulating what a user would say to IDE Copilot)
+          PROMPT=$(printf "%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s" \
+            "Generate a production-ready Dockerfile for this project." \
+            "Project files: $TREE_OUTPUT" \
+            "package.json: $PACKAGE_JSON" \
+            "requirements.txt: $REQUIREMENTS" \
+            "go.mod: $GO_MOD" \
+            "pom.xml: $POM_XML" \
+            "Gemfile: $GEMFILE" \
+            "Cargo.toml: $CARGO" \
+            "Detected language: $DETECTED" \
+            "Create an optimized Dockerfile with: correct base image for the language/framework, multi-stage build if applicable, proper dependency caching, non-root user, minimal layers, appropriate CMD/ENTRYPOINT. Return ONLY the Dockerfile content, no explanations.")
+
+          # Call ChatGPT API (like using ChatGPT in IDE)
+          echo "Asking ChatGPT to generate Dockerfile..."
+
+          # Build JSON payload with jq
+          PAYLOAD=$(jq -n --arg prompt "$PROMPT" '{"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "You are an expert DevOps engineer. Generate Dockerfiles based on project context."}, {"role": "user", "content": $prompt}], "temperature": 0.3, "max_tokens": 1500}')
+
+          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+            -d "$PAYLOAD")
+
+          # Extract and clean Dockerfile
+          echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null | \
+            sed 's/```dockerfile//g; s/```//g' | \
+            awk 'NF || !done { if (NF) done=0; print } !NF { done=1 }' | \
+            sed '/^$/d' > Dockerfile.ide
+
+          if [ -s Dockerfile.ide ] && grep -q "FROM" Dockerfile.ide; then
+            echo "✓ IDE Agent successfully generated Dockerfile"
+            echo "Preview:"
+            head -n 8 Dockerfile.ide
           else
-            echo "Aider not available, skipping generation"
+            echo "✗ Generation failed, creating fallback"
             echo "FROM alpine:latest" > Dockerfile.ide
             echo 'CMD ["sh"]' >> Dockerfile.ide
           fi
-
-          # Cleanup
-          rm -f aider.log .aider*
-
-          cd ..
-
-      - name: Set up Docker Buildx (for DockAI)
-        uses: docker/setup-buildx-action@v3.11.1
-        with:
-          driver-opts: |
-            image=moby/buildkit:latest
-            network=host
 
       - name: Cache Docker layers
         uses: actions/cache@v4
