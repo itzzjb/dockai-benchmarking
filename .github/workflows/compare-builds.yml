@@ -140,74 +140,73 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-
           cd "${TARGET_DIR}"
+          echo "Simulating IDE Agent (like Gemini CLI/Claude Code) in current directory..."
 
-          echo "Simulating IDE Copilot/Gemini CLI/Claude Code experience..."
+          # Function to call OpenAI API with conversation history
+          call_openai() {
+            local messages="$1"
+            local model="${2:-gpt-4o}"
+            curl -s https://api.openai.com/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+              -d "{\"model\":\"$model\",\"messages\":$messages,\"temperature\":0.3,\"max_tokens\":2000}" | \
+              jq -r '.choices[0].message.content // empty'
+          }
 
-          # Gather project context (what the IDE would see)
-          echo "Analyzing project files..."
+          # Simulate agent tools
+          list_files() {
+            find . -maxdepth 3 -type f ! -path "*/\.*" ! -path "*/node_modules/*" ! -path "*/vendor/*" ! -path "*/__pycache__/*" ! -path "*/dist/*" ! -path "*/build/*" 2>/dev/null | head -50
+          }
 
-          # Get directory structure
-          TREE_OUTPUT=$(find . -maxdepth 3 -type f ! -path "*/\.*" ! -path "*/node_modules/*" ! -path "*/vendor/*" | head -30)
+          read_file() {
+            local file="$1"
+            if [ -f "$file" ] && [ $(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null) -lt 10000 ]; then
+              cat "$file" 2>/dev/null | head -100
+            else
+              echo "[File too large or not found]"
+            fi
+          }
 
-          # Get key configuration files
-          PACKAGE_JSON=$([ -f package.json ] && cat package.json 2>/dev/null | head -50 || echo "")
-          REQUIREMENTS=$([ -f requirements.txt ] && cat requirements.txt 2>/dev/null || echo "")
-          GO_MOD=$([ -f go.mod ] && cat go.mod 2>/dev/null || echo "")
-          POM_XML=$([ -f pom.xml ] && cat pom.xml 2>/dev/null | head -30 || echo "")
-          GEMFILE=$([ -f Gemfile ] && cat Gemfile 2>/dev/null || echo "")
-          CARGO=$([ -f Cargo.toml ] && cat Cargo.toml 2>/dev/null || echo "")
+          # Step 1: Initial exploration
+          echo "Agent exploring project structure..."
+          FILE_LIST=$(list_files)
 
-          # Detect main language/framework
-          if [ -f package.json ]; then DETECTED="Node.js/JavaScript"
-          elif [ -f requirements.txt ] || [ -f setup.py ]; then DETECTED="Python"
-          elif [ -f go.mod ]; then DETECTED="Go"
-          elif [ -f pom.xml ] || [ -f build.gradle ]; then DETECTED="Java"
-          elif [ -f Gemfile ]; then DETECTED="Ruby"
-          elif [ -f Cargo.toml ]; then DETECTED="Rust"
-          elif [ -f composer.json ]; then DETECTED="PHP"
-          else DETECTED="Unknown"
-          fi
+          # Step 2: First agent call
+          SYSTEM_PROMPT="You are an AI coding agent working in an IDE (like Gemini CLI or Claude Code). You are in a project directory and need to create a Dockerfile. You can explore files, read their contents, and make decisions iteratively. Be concise and focused."
+          USER_PROMPT="I'm in a project directory. Here are the files I can see: ${FILE_LIST}. Based on this, what key files should I read to understand how to create a Dockerfile? List 3-5 most important files (just filenames, one per line, no explanations)."
 
-          echo "Detected: $DETECTED"
+          MESSAGES=$(jq -n --arg system "$SYSTEM_PROMPT" --arg user "$USER_PROMPT" '[{"role":"system","content":$system},{"role":"user","content":$user}]')
+          echo "Agent deciding which files to examine..."
+          FILES_TO_READ=$(call_openai "$MESSAGES" "gpt-4o")
 
-          # Create the prompt (simulating what a user would say to IDE Copilot)
-          PROMPT=$(printf "%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s" \
-            "Generate a production-ready Dockerfile for this project." \
-            "Project files: $TREE_OUTPUT" \
-            "package.json: $PACKAGE_JSON" \
-            "requirements.txt: $REQUIREMENTS" \
-            "go.mod: $GO_MOD" \
-            "pom.xml: $POM_XML" \
-            "Gemfile: $GEMFILE" \
-            "Cargo.toml: $CARGO" \
-            "Detected language: $DETECTED" \
-            "Create an optimized Dockerfile with: correct base image for the language/framework, multi-stage build if applicable, proper dependency caching, non-root user, minimal layers, appropriate CMD/ENTRYPOINT. Return ONLY the Dockerfile content, no explanations.")
+          # Step 3: Read the identified files
+          echo "Agent reading key files..."
+          ACTUAL_CONTENTS=""
+          for file in package.json requirements.txt go.mod pom.xml Cargo.toml Gemfile composer.json setup.py pyproject.toml; do
+            if [ -f "$file" ]; then
+              echo "  Reading $file"
+              content=$(read_file "$file")
+              ACTUAL_CONTENTS="${ACTUAL_CONTENTS}File: $file - Content: $content. "
+            fi
+          done
 
-          # Call ChatGPT API (like using ChatGPT in IDE)
-          echo "Asking ChatGPT to generate Dockerfile..."
+          # Step 4: Generate Dockerfile
+          echo "Agent generating Dockerfile..."
+          DOCKERFILE_PROMPT="Based on the project files I've read: ${ACTUAL_CONTENTS}. Now create a production-ready Dockerfile for this project. Requirements: Use appropriate base image for the detected language/framework, multi-stage build if beneficial, optimize layer caching (COPY dependencies first then code), non-root user for security, minimal image size, proper CMD/ENTRYPOINT, follow Docker best practices. Return ONLY the Dockerfile content without markdown code blocks or explanations."
 
-          # Build JSON payload with jq
-          PAYLOAD=$(jq -n --arg prompt "$PROMPT" '{"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "You are an expert DevOps engineer. Generate Dockerfiles based on project context."}, {"role": "user", "content": $prompt}], "temperature": 0.3, "max_tokens": 1500}')
+          MESSAGES=$(jq -n --arg system "$SYSTEM_PROMPT" --arg user "$USER_PROMPT" --arg assistant "$FILES_TO_READ" --arg final "$DOCKERFILE_PROMPT" '[{"role":"system","content":$system},{"role":"user","content":$user},{"role":"assistant","content":$assistant},{"role":"user","content":$final}]')
+          DOCKERFILE_CONTENT=$(call_openai "$MESSAGES" "gpt-4o")
 
-          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
-            -d "$PAYLOAD")
-
-          # Extract and clean Dockerfile
-          echo "$RESPONSE" | jq -r '.choices[0].message.content' 2>/dev/null | \
-            sed 's/```dockerfile//g; s/```//g' | \
-            awk 'NF || !done { if (NF) done=0; print } !NF { done=1 }' | \
-            sed '/^$/d' > Dockerfile.ide
+          # Clean and save
+          echo "$DOCKERFILE_CONTENT" | sed 's/```dockerfile//g; s/```Dockerfile//g; s/```//g' | sed '/^[[:space:]]*$/d' | awk '/^FROM / {found=1} found' > Dockerfile.ide
 
           if [ -s Dockerfile.ide ] && grep -q "FROM" Dockerfile.ide; then
-            echo "✓ IDE Agent successfully generated Dockerfile"
+            echo "IDE Agent successfully generated Dockerfile"
             echo "Preview:"
-            head -n 8 Dockerfile.ide
+            head -n 10 Dockerfile.ide
           else
-            echo "✗ Generation failed, creating fallback"
+            echo "Generation failed, creating minimal fallback"
             echo "FROM alpine:latest" > Dockerfile.ide
             echo 'CMD ["sh"]' >> Dockerfile.ide
           fi
