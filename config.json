@@ -1,5 +1,5 @@
 {
-  "repository_url": "docker/node-sdk-legacy",
+  "repository_url": "dockersamples/blog-react-app",
   "weights": {
     "size": 0.3,
     "time": 0.2,
