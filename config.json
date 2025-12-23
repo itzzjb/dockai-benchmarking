@@ -1,5 +1,5 @@
 {
-  "repository_url": "hashicorp/http-echo",
+  "repository_url": "traefik/whoami",
   "weights": {
     "size": 0.3,
     "time": 0.2,
