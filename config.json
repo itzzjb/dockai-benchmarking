@@ -1,5 +1,6 @@
 {
-  "repository_url": "traefik/whoami",
+  "repository_url": "dockersamples/node-bulletin-board",
+  "subdirectory": "bulletin-board-app",
   "weights": {
     "size": 0.3,
     "time": 0.2,
