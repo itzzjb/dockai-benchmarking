@@ -79,11 +79,14 @@ jobs:
           # Read from config.json
           if [ -f config.json ]; then
             config_repo=$(jq -r '.repository_url // empty' config.json)
+            config_subdir=$(jq -r '.subdirectory // empty' config.json)
           else
             config_repo=""
+            config_subdir=""
           fi
 
           raw_repo="$config_repo"
+          echo "subdirectory=$config_subdir" >> "$GITHUB_OUTPUT"
 
           if [ -z "$raw_repo" ]; then echo "Repo URL required" >&2; exit 1; fi
 
@@ -127,12 +130,30 @@ jobs:
           # Reset remote to avoid token leak
           git -C "${TARGET_DIR}" remote set-url origin "${{ steps.repo.outputs.clone_url }}"
 
+      - name: Set working directory
+        id: workdir
+        run: |
+          set -euo pipefail
+          SUBDIR="${{ steps.repo.outputs.subdirectory }}"
+          if [ -n "$SUBDIR" ]; then
+            WORK_DIR="${TARGET_DIR}/${SUBDIR}"
+            if [ ! -d "$WORK_DIR" ]; then
+              echo "Error: Subdirectory '$SUBDIR' not found in repository" >&2
+              exit 1
+            fi
+          else
+            WORK_DIR="${TARGET_DIR}"
+          fi
+          echo "work_dir=$WORK_DIR" >> "$GITHUB_OUTPUT"
+          echo "Using working directory: $WORK_DIR"
+
       - name: Backup human Dockerfile
         run: |
-          if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-            mv "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/../Dockerfile.human.bak"
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
+          if [ -f "${WORK_DIR}/Dockerfile" ]; then
+            mv "${WORK_DIR}/Dockerfile" "${WORK_DIR}/../Dockerfile.human.bak"
           fi
-          rm -f "${TARGET_DIR}"/Dockerfile.*
+          rm -f "${WORK_DIR}"/Dockerfile.*
 
       - name: Generate IDE Agent Dockerfile
         continue-on-error: true
@@ -140,7 +161,8 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          cd "${TARGET_DIR}"
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
+          cd "${WORK_DIR}"
           echo "Simulating IDE Agent (like Gemini CLI/Claude Code) in current directory..."
 
           # Function to call OpenAI API with conversation history
