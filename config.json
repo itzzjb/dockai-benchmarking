@@ -1,6 +1,6 @@
 {
-  "repository_url": "dockersamples/node-bulletin-board",
-  "subdirectory": "bulletin-board-app",
+  "repository_url": "dockersamples/docker-swarm-visualizer",
+  "subdirectory": "./",
   "weights": {
     "size": 0.3,
     "time": 0.2,
