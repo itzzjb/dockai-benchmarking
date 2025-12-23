@@ -261,8 +261,9 @@ jobs:
 
       - name: Restore original Dockerfile
         run: |
-          if [ -f "${TARGET_DIR}/../Dockerfile.human.bak" ]; then
-            cp "${TARGET_DIR}/../Dockerfile.human.bak" "${TARGET_DIR}/Dockerfile"
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
+          if [ -f "${WORK_DIR}/../Dockerfile.human.bak" ]; then
+            cp "${WORK_DIR}/../Dockerfile.human.bak" "${WORK_DIR}/Dockerfile"
           fi
 
       - name: Generate DockAI Dockerfile
@@ -271,7 +272,7 @@ jobs:
         continue-on-error: true
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          project_path: ${{ env.TARGET_DIR }}
+          project_path: ${{ steps.workdir.outputs.work_dir }}
           max_retries: 10
           langchain_tracing_v2: true
           langchain_api_key: ${{ secrets.LANGCHAIN_API_KEY }}
@@ -288,13 +289,14 @@ jobs:
 
       - name: Organize Dockerfiles
         run: |
-          if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-            cp "${TARGET_DIR}/Dockerfile" "${TARGET_DIR}/Dockerfile.dockai"
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
+          if [ -f "${WORK_DIR}/Dockerfile" ]; then
+            cp "${WORK_DIR}/Dockerfile" "${WORK_DIR}/Dockerfile.dockai"
           fi
-          if [ -f "${TARGET_DIR}/../Dockerfile.human.bak" ]; then
-            cp "${TARGET_DIR}/../Dockerfile.human.bak" "${TARGET_DIR}/Dockerfile"
+          if [ -f "${WORK_DIR}/../Dockerfile.human.bak" ]; then
+            cp "${WORK_DIR}/../Dockerfile.human.bak" "${WORK_DIR}/Dockerfile"
           fi
-          rm -f "${TARGET_DIR}/../Dockerfile.human.bak"
+          rm -f "${WORK_DIR}/../Dockerfile.human.bak"
 
       - name: Purge study images (keep action images)
         if: always()
@@ -308,15 +310,16 @@ jobs:
       - name: Check Artifact Existence
         id: detect
         run: |
-          [ -f "${TARGET_DIR}/Dockerfile" ] && echo "human_present=true" >> "$GITHUB_OUTPUT" || echo "human_present=false" >> "$GITHUB_OUTPUT"
-          [ -f "${TARGET_DIR}/Dockerfile.dockai" ] && echo "dockai_present=true" >> "$GITHUB_OUTPUT" || echo "dockai_present=false" >> "$GITHUB_OUTPUT"
-          [ -f "${TARGET_DIR}/Dockerfile.ide" ] && echo "ide_present=true" >> "$GITHUB_OUTPUT" || echo "ide_present=false" >> "$GITHUB_OUTPUT"
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
+          [ -f "${WORK_DIR}/Dockerfile" ] && echo "human_present=true" >> "$GITHUB_OUTPUT" || echo "human_present=false" >> "$GITHUB_OUTPUT"
+          [ -f "${WORK_DIR}/Dockerfile.dockai" ] && echo "dockai_present=true" >> "$GITHUB_OUTPUT" || echo "dockai_present=false" >> "$GITHUB_OUTPUT"
+          [ -f "${WORK_DIR}/Dockerfile.ide" ] && echo "ide_present=true" >> "$GITHUB_OUTPUT" || echo "ide_present=false" >> "$GITHUB_OUTPUT"
 
       - name: Hadolint Human Dockerfile
         if: steps.detect.outputs.human_present == 'true'
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: ${{ env.TARGET_DIR }}/Dockerfile
+          dockerfile: ${{ steps.workdir.outputs.work_dir }}/Dockerfile
           format: json
           output-file: hadolint-human.json
           failure-threshold: error
@@ -326,7 +329,7 @@ jobs:
         if: steps.detect.outputs.dockai_present == 'true'
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.dockai
+          dockerfile: ${{ steps.workdir.outputs.work_dir }}/Dockerfile.dockai
           format: json
           output-file: hadolint-dockai.json
           failure-threshold: error
@@ -336,7 +339,7 @@ jobs:
         if: steps.detect.outputs.ide_present == 'true'
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: ${{ env.TARGET_DIR }}/Dockerfile.ide
+          dockerfile: ${{ steps.workdir.outputs.work_dir }}/Dockerfile.ide
           format: json
           output-file: hadolint-ide.json
           failure-threshold: error
@@ -352,8 +355,9 @@ jobs:
         run: |
           # Continue even if the build fails so later steps can still run
           set -u -o pipefail
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
           start=$(date +%s)
-          if docker build --no-cache --file "${TARGET_DIR}/Dockerfile" --tag "${HUMAN_IMG}" "${TARGET_DIR}"; then
+          if docker build --no-cache --file "${WORK_DIR}/Dockerfile" --tag "${HUMAN_IMG}" "${WORK_DIR}"; then
             status="success"
           else
             status="failed"
@@ -366,8 +370,9 @@ jobs:
         if: steps.detect.outputs.dockai_present == 'true'
         run: |
           set -u -o pipefail
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
           start=$(date +%s)
-          if docker build --no-cache --file "${TARGET_DIR}/Dockerfile.dockai" --tag "${DOCKAI_IMG}" "${TARGET_DIR}"; then
+          if docker build --no-cache --file "${WORK_DIR}/Dockerfile.dockai" --tag "${DOCKAI_IMG}" "${WORK_DIR}"; then
             status="success"
           else
             status="failed"
@@ -380,8 +385,9 @@ jobs:
         if: steps.detect.outputs.ide_present == 'true'
         run: |
           set -u -o pipefail
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
           start=$(date +%s)
-          if docker build --no-cache --file "${TARGET_DIR}/Dockerfile.ide" --tag "${IDE_IMG}" "${TARGET_DIR}"; then
+          if docker build --no-cache --file "${WORK_DIR}/Dockerfile.ide" --tag "${IDE_IMG}" "${WORK_DIR}"; then
             status="success"
           else
             status="failed"
@@ -393,8 +399,9 @@ jobs:
       - name: Build CNB (Measure Time)
         run: |
           set -u -o pipefail
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
           start=$(date +%s)
-          if pack build "${CNB_IMG}" --builder paketobuildpacks/builder:base --path "${TARGET_DIR}" --pull-policy if-not-present --clear-cache; then
+          if pack build "${CNB_IMG}" --builder paketobuildpacks/builder:base --path "${WORK_DIR}" --pull-policy if-not-present --clear-cache; then
             status="success"
           else
             status="failed"
@@ -726,6 +733,7 @@ jobs:
           REPO_NAME: ${{ steps.repo.outputs.repo_name }}
         run: |
           set -euo pipefail
+          WORK_DIR="${{ steps.workdir.outputs.work_dir }}"
           ARTIFACT_ROOT="artifact/${REPO_NAME}"
           DOCKERFILES_DIR="$ARTIFACT_ROOT/dockerfiles"
           DATA_DIR="$ARTIFACT_ROOT/data"
@@ -739,14 +747,14 @@ jobs:
           fi
 
           # Collect Dockerfiles
-          if [ -f "${TARGET_DIR}/Dockerfile" ]; then
-            cp "${TARGET_DIR}/Dockerfile" "$DOCKERFILES_DIR/Dockerfile.human"
+          if [ -f "${WORK_DIR}/Dockerfile" ]; then
+            cp "${WORK_DIR}/Dockerfile" "$DOCKERFILES_DIR/Dockerfile.human"
           fi
-          if [ -f "${TARGET_DIR}/Dockerfile.dockai" ]; then
-            cp "${TARGET_DIR}/Dockerfile.dockai" "$DOCKERFILES_DIR/Dockerfile.dockai"
+          if [ -f "${WORK_DIR}/Dockerfile.dockai" ]; then
+            cp "${WORK_DIR}/Dockerfile.dockai" "$DOCKERFILES_DIR/Dockerfile.dockai"
           fi
-          if [ -f "${TARGET_DIR}/Dockerfile.ide" ]; then
-            cp "${TARGET_DIR}/Dockerfile.ide" "$DOCKERFILES_DIR/Dockerfile.ide"
+          if [ -f "${WORK_DIR}/Dockerfile.ide" ]; then
+            cp "${WORK_DIR}/Dockerfile.ide" "$DOCKERFILES_DIR/Dockerfile.ide"
           fi
 
           # Gather remaining outputs under data/
