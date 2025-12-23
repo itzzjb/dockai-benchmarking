@@ -1,5 +1,5 @@
 {
-  "repository_url": "dockersamples/blog-react-app",
+  "repository_url": "dockersamples/genai-app-demo",
   "weights": {
     "size": 0.3,
     "time": 0.2,
