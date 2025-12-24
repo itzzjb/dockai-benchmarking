@@ -1,5 +1,5 @@
 {
-  "repository_url": "dockersamples/docker-swarm-visualizer",
+  "repository_url": "docker/docker-gs-ping-roach",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
