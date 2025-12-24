@@ -1,5 +1,5 @@
 {
-  "repository_url": "docker/simplepypi",
+  "repository_url": "stefanprodan/istio-hpa",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
