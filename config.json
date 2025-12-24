@@ -1,5 +1,5 @@
 {
-  "repository_url": "derailed/k9s",
+  "repository_url": "aquasecurity/trivy",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
