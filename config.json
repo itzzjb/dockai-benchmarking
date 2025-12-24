@@ -1,5 +1,5 @@
 {
-  "repository_url": "aquasecurity/trivy",
+  "repository_url": "jqlang/jq",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
