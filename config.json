@@ -1,5 +1,5 @@
 {
-  "repository_url": "mccutchen/go-httpbin",
+  "repository_url": "grafana/k6",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
