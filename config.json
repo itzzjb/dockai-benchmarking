@@ -1,5 +1,5 @@
 {
-  "repository_url": "kubernetes-up-and-running/kuard",
+  "repository_url": "hashicorp/http-echo",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
