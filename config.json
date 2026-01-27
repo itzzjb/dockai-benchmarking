@@ -1,5 +1,5 @@
 {
-  "repository_url": "minio/minio",
+  "repository_url": "mailhog/MailHog",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
