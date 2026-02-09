@@ -1,5 +1,5 @@
 {
-  "repository_url": "prometheus/node_exporter",
+  "repository_url": "gitleaks/gitleaks",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
