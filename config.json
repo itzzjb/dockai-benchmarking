@@ -1,5 +1,5 @@
 {
-  "repository_url": "prometheus/alertmanager",
+  "repository_url": "linuxserver/docker-wireguard",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
