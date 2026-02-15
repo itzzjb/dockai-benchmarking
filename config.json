@@ -1,5 +1,5 @@
 {
-  "repository_url": "kubernetes-sigs/metrics-server",
+  "repository_url": "tikv/tikv",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
