@@ -1,5 +1,5 @@
 {
-  "repository_url": "etcd-io/etcd",
+  "repository_url": "coredns/coredns",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
