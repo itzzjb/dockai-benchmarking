@@ -1,5 +1,5 @@
 {
-  "repository_url": "go-acme/lego",
+  "repository_url": "restic/rest-server",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
