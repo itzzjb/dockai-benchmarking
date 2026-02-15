@@ -1,5 +1,5 @@
 {
-  "repository_url": "coredns/coredns",
+  "repository_url": "kubernetes-sigs/metrics-server",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
