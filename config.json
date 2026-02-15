@@ -1,5 +1,5 @@
 {
-  "repository_url": "restic/rest-server",
+  "repository_url": "golang-migrate/migrate",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
