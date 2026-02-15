@@ -1,5 +1,5 @@
 {
-  "repository_url": "namshi/docker-smtp",
+  "repository_url": "mailhog/MailHog",
   "subdirectory": "",
   "weights": {
     "size": 0.3,
