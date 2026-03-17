@@ -168,9 +168,9 @@ jobs:
           cd "${WORK_DIR}"
           echo "Running real IDE Agent (OpenAI Codex CLI)..."
 
-          codex --quiet \
-            --approval-mode full-auto \
+          codex exec \
             --model gpt-5-mini \
+            -c 'sandbox_permissions=["disk-full-read-access","disk-write-access"]' \
             "Explore this project directory. Read the relevant files \
              (dependency manifests, configs, source code) to understand \
              the tech stack. Then create a production-ready Dockerfile. \
