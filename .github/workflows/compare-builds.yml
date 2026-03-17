@@ -58,10 +58,10 @@ jobs:
           cache: "pip"
           cache-dependency-path: ".github/requirements.txt"
 
-      - name: Set up Trivy CLI (0.68.1)
+      - name: Set up Trivy CLI (0.69.3)
         uses: aquasecurity/setup-trivy@v0.2.5
         with:
-          version: v0.68.1
+          version: v0.69.3
           cache: true
 
       - name: Set up pack CLI
